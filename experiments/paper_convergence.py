@@ -43,6 +43,8 @@ SOURCE_FILES = tuple(sorted(set(
     [ROOT / "config.json", ROOT / "experiments/PAPER_FOUR_STUDIES_PROTOCOL.md"] +
     list((ROOT/"experiments").glob("LONG_PROBE_2000_PROTOCOL.md")) +
     list((ROOT/"experiments").glob("LEARNING_CONTRACT_PROTOCOL.md")))))
+if (ROOT/"experiments/FOUR_CURVE_PROTOCOL.md").exists():
+    SOURCE_FILES += (ROOT/"experiments/FOUR_CURVE_PROTOCOL.md",)
 
 
 def free_ram_gib():
@@ -248,13 +250,13 @@ def configuration(settings):
                  td3_replay_slots=4096, td3_batch=16, td3_update_every=8)
     train["actor_lr"], train["critic_lr"] = LEARNING_RATES[settings["lr"]-1]
     profile = settings.get("training_profile", "audit_v1")
-    if profile in ("team_v2", "credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6"):
+    if profile in ("team_v2", "credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6", "from_scratch_v7"):
         # Conserving mean local rewards does not preserve the gradient of the
         # cooperative objective when a decision changes other users' queues.
         train.update(local_credit_fraction=0., linear_lr_decay=True,
                      lr_final_fraction=.1, td3_huber=True,
                      td3_discrete_objective="categorical_expectation")
-        if profile in ("credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6"):
+        if profile in ("credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6", "from_scratch_v7"):
             train.update(critic_clock_features=2, actor_warmup_steps=2048)
         if profile == "contract_v4":
             variants = {"control": (.98, .01), "trace1": (1., .01),
@@ -278,6 +280,13 @@ def configuration(settings):
                 raise ValueError("Unregistered actor-component training diagnostic")
             train.update(gae_lambda=1., entropy=0., record_advantage_diagnostics=True,
                          shared_team_value=True, frozen_actor_stages=frozen[variant])
+        if profile == "from_scratch_v7":
+            if settings["method"] not in ("TMPPO", "IPPO"):
+                raise ValueError("Four-curve profile only registers the two PPO methods")
+            train.update(gae_lambda=1., entropy=0., actor_cost_prior_scale=0.,
+                         shared_team_value=False, frozen_actor_stages=[],
+                         actor_initialization="xavier_small_head_v1", actor_head_gain=.01,
+                         actor_init_seed=settings["seed"], record_advantage_diagnostics=True)
     elif profile != "audit_v1":
         raise ValueError("Unknown training profile")
     return cfg, train
@@ -359,6 +368,7 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
     torch.manual_seed(settings["seed"])
     learner = learner_for(settings["method"], train, cfg)
     training, validation = [], []
+    episodes, episode_reward_sum = [], 0.
     episode = 0
     sim = new_environment(cfg, settings["seed"], episode, settings["phase_count"])
     start_update, best, selected = 0, math.inf, None
@@ -381,6 +391,8 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
         rng_load(saved["rng"])
         sim, episode = saved["environment"], saved["episode"]
         training, validation = saved["training"], saved["validation"]
+        if settings.get("record_complete_episodes", False):
+            episodes, episode_reward_sum = saved["episodes"], saved["episode_reward_sum"]
         start_update, best, selected = saved["update"], saved["best"], saved["selected"]
     started = time.monotonic()
     historical_wall = training[-1]["wall_s"] if training else 0.
@@ -410,7 +422,8 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
         if durable:
             save_checkpoint(out/"latest.pt", dict(
                 learner=learner.state(), environment=sim, episode=episode, rng=rng_state(),
-                update=update, best=best, selected=selected, training=training, validation=validation))
+                update=update, best=best, selected=selected, training=training, validation=validation,
+                episodes=episodes, episode_reward_sum=episode_reward_sum))
             latest_checkpoint_update = update
         csv_write(out/"train.csv", training)
         json_write(out/"status.json", dict(update=update, env_steps=update*settings["rollout"],
@@ -422,6 +435,8 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
                 latest_bytes=(out/"latest.pt").stat().st_size if durable else None))+"\n")
 
     if not resume:
+        if settings.get("retain_initial_checkpoint", False):
+            save_checkpoint(out/"initial_checkpoint.pt", copy.deepcopy(learner.state(for_evaluation=True)))
         validate(0)
         checkpoint(0)
     def set_clock():
@@ -434,7 +449,7 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
         rewards = []
         learner.deterministic = False
         learner.set_progress(update, settings.get("schedule_updates", settings["updates"]))
-        for _ in range(settings["rollout"]):
+        for slot_index in range(settings["rollout"]):
             if sim.slot == settings["episode_steps"]:
                 if sim.tasks:
                     raise AssertionError("Training episode truncated unresolved task costs")
@@ -447,6 +462,23 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
             done = sim.slot == settings["episode_steps"]
             learner.remember(sim.agent_rewards(train.get("local_credit_fraction",.7)), records, done)
             rewards.append(reward)
+            if settings.get("record_complete_episodes", False):
+                episode_reward_sum += float(reward)
+                if done:
+                    if sim.tasks:
+                        raise AssertionError("Cannot log an episode with unresolved tasks")
+                    scale = sim.u * cfg["arrival_per_user_s"] * cfg["dt_s"]
+                    if not math.isclose(episode_reward_sum, -sim.cost_total / scale,
+                                        rel_tol=1e-9, abs_tol=1e-7):
+                        raise AssertionError("Episode reward does not reconcile to physical cost")
+                    episodes.append(dict(episode=episode+1, episode_steps=sim.slot,
+                        env_steps=(update-1)*settings["rollout"]+slot_index+1,
+                        phase_s=sim.phase_s, train_seed=settings["seed"],
+                        train_trace_hash=sim.arrival_hash, episode_reward_sum=episode_reward_sum,
+                        mean_training_reward=episode_reward_sum/sim.slot,
+                        physical_cost_total=sim.cost_total, **sim.metrics()))
+                    episode_reward_sum = 0.
+                    csv_write(out/"episodes.csv", episodes)
         ctx, glob, *_ = sim.observations()
         set_clock()
         diag = learner.update(ctx, glob)
@@ -481,7 +513,8 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
                learned_beyond_initialization=selected!=0, test_used=False))
     json_write(out/"complete.json", dict(updates=settings["updates"],
                env_steps=settings["updates"]*settings["rollout"], best_update=selected,
-               wall_s=historical_wall+time.monotonic()-started))
+               wall_s=historical_wall+time.monotonic()-started,
+               completed_episodes=len(episodes) if settings.get("record_complete_episodes", False) else None))
     if (out/"paused.json").exists():
         (out/"paused.json").unlink()
     return True

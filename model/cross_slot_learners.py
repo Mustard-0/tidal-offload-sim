@@ -32,6 +32,15 @@ def training_clock(remaining, arrivals_remaining, total):
     return np.asarray([remaining/total, arrivals_remaining/total], dtype=np.float32)
 
 
+def initialization_contract(cfg):
+    mode = cfg.get("actor_initialization", "cost_prior_zero_head")
+    if mode == "cost_prior_zero_head":
+        return dict(mode=mode)
+    if mode != "xavier_small_head_v1" or cfg["actor_cost_prior_scale"] != 0.:
+        raise ValueError("Unregistered policy initialization contract")
+    return dict(mode=mode, gain=float(cfg["actor_head_gain"]), seed=int(cfg["actor_init_seed"]))
+
+
 class CrossSlotPPO(PPO):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -43,6 +52,20 @@ class CrossSlotPPO(PPO):
         frozen = self.cfg.get("frozen_actor_stages", [])
         if frozen not in ([], ["user"], ["route"]):
             raise ValueError("Unregistered actor-stage ablation")
+        contract = initialization_contract(self.cfg)
+        if contract["mode"] == "xavier_small_head_v1":
+            # A local RNG avoids critic-size and CPU QR differences between
+            # runners. All four cells start with exactly the same actors.
+            rng = np.random.default_rng(contract["seed"])
+            with torch.no_grad():
+                for actor in self.actors.values():
+                    for layer in actor:
+                        if isinstance(layer, nn.Linear):
+                            gain = contract["gain"] if layer is actor[-1] else 1.
+                            bound = gain * np.sqrt(6. / (layer.in_features + layer.out_features))
+                            values = rng.uniform(-bound, bound, tuple(layer.weight.shape)).astype(np.float32)
+                            layer.weight.copy_(self.tensor(values))
+                            layer.bias.zero_()
 
     def set_training_clock(self, remaining, arrivals_remaining, total):
         self.training_clock = training_clock(remaining, arrivals_remaining, total)
@@ -64,10 +87,13 @@ class CrossSlotPPO(PPO):
         result = super().state(for_evaluation)
         result.update(training_steps=self.steps, training_clock=self.training_clock.copy(),
                       shared_team_value=self.cfg.get("shared_team_value", False),
-                      frozen_actor_stages=list(self.cfg.get("frozen_actor_stages", [])))
+                      frozen_actor_stages=list(self.cfg.get("frozen_actor_stages", [])),
+                      actor_initialization_contract=initialization_contract(self.cfg))
         return result
 
     def load(self, state):
+        if state.get("actor_initialization_contract", dict(mode="cost_prior_zero_head")) != initialization_contract(self.cfg):
+            raise ValueError("Checkpoint policy-initialization contract differs")
         if state.get("shared_team_value", False) != self.cfg.get("shared_team_value", False):
             raise ValueError("Checkpoint centralized value-input contract differs")
         if state.get("frozen_actor_stages", []) != self.cfg.get("frozen_actor_stages", []):
