@@ -74,6 +74,8 @@ def code_hashes():
     paths += list((ROOT/".github/workflows").glob("*long_probe*.yml"))
     if (ROOT/"experiments/LONG_PROBE_2000_PROTOCOL.md").exists():
         paths.append(ROOT/"experiments/LONG_PROBE_2000_PROTOCOL.md")
+    if (ROOT/"experiments/LEARNING_CONTRACT_PROTOCOL.md").exists():
+        paths.append(ROOT/"experiments/LEARNING_CONTRACT_PROTOCOL.md")
     return {p.relative_to(ROOT).as_posix(): file_hash(p, True) for p in sorted(paths)}
 
 

@@ -82,6 +82,19 @@ class CrossSlotPPO(PPO):
         counts = {name: 0 for name in ("user", "group", "route")}
         actions = {name: np.zeros(11 if name == "route" else 3, dtype=int)
                    for name in counts}
+        advantages = {name: [] for name in counts}
+        if self.cfg.get("record_advantage_diagnostics", False):
+            next_value = self.raw_values(self.critic_input(context, glob))
+            gae = np.zeros_like(next_value)
+            for _, value, reward, records, done in reversed(self.buffer):
+                delta = reward + self.cfg["gamma"] * next_value * (not done) - value
+                gae = delta + self.cfg["gamma"] * self.cfg["gae_lambda"] * (not done) * gae
+                for row in records:
+                    role = ("group" if row["stage"] == "user" and row["obs"][63] < 0
+                            else row["stage"])
+                    if role in advantages:
+                        advantages[role].append(float(gae[row["agent"]]))
+                next_value = value
         for _, _, _, records, _ in self.buffer:
             for row in records:
                 name = ("group" if row["stage"] == "user" and row["obs"][63] < 0
@@ -95,6 +108,9 @@ class CrossSlotPPO(PPO):
             result[name + "_trainable_decisions"] = counts[name]
             for action, count in enumerate(actions[name]):
                 result["%s_action_%d_fraction" % (name, action)] = count / max(counts[name], 1)
+            if self.cfg.get("record_advantage_diagnostics", False):
+                result[name + "_raw_adv_mean"] = float(np.mean(advantages[name])) if advantages[name] else 0.
+                result[name + "_raw_adv_std"] = float(np.std(advantages[name])) if advantages[name] else 0.
         return result
 
 

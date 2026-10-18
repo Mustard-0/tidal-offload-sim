@@ -41,7 +41,8 @@ SOURCE_FILES = tuple(sorted(set(
     list((ROOT / "model").glob("*.py")) +
     list((ROOT / "experiments").glob("*.py")) +
     [ROOT / "config.json", ROOT / "experiments/PAPER_FOUR_STUDIES_PROTOCOL.md"] +
-    list((ROOT/"experiments").glob("LONG_PROBE_2000_PROTOCOL.md")))))
+    list((ROOT/"experiments").glob("LONG_PROBE_2000_PROTOCOL.md")) +
+    list((ROOT/"experiments").glob("LEARNING_CONTRACT_PROTOCOL.md")))))
 
 
 def free_ram_gib():
@@ -247,14 +248,22 @@ def configuration(settings):
                  td3_replay_slots=4096, td3_batch=16, td3_update_every=8)
     train["actor_lr"], train["critic_lr"] = LEARNING_RATES[settings["lr"]-1]
     profile = settings.get("training_profile", "audit_v1")
-    if profile in ("team_v2", "credit_v3"):
+    if profile in ("team_v2", "credit_v3", "contract_v4"):
         # Conserving mean local rewards does not preserve the gradient of the
         # cooperative objective when a decision changes other users' queues.
         train.update(local_credit_fraction=0., linear_lr_decay=True,
                      lr_final_fraction=.1, td3_huber=True,
                      td3_discrete_objective="categorical_expectation")
-        if profile == "credit_v3":
+        if profile in ("credit_v3", "contract_v4"):
             train.update(critic_clock_features=2, actor_warmup_steps=2048)
+        if profile == "contract_v4":
+            variants = {"control": (.98, .01), "trace1": (1., .01),
+                        "noentropy": (.98, 0.), "trace1_noentropy": (1., 0.)}
+            variant = settings.get("diagnostic_variant")
+            if variant not in variants:
+                raise ValueError("Unknown predeclared diagnostic variant")
+            train["gae_lambda"], train["entropy"] = variants[variant]
+            train["record_advantage_diagnostics"] = True
     elif profile != "audit_v1":
         raise ValueError("Unknown training profile")
     return cfg, train
