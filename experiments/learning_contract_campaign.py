@@ -36,8 +36,9 @@ def initialize(root, verification):
         raise ValueError("Commit the reviewed source first")
     plan = dict(schema="learning-contract-diagnostic-v1", commit=h.command(["git", "rev-parse", "HEAD"]),
                 source_hashes=h.code_hashes(), verification=proof,
+                execution="github-only-four-standard-cpu-jobs",
                 cases=[dict(variant=v, settings=registered_settings(v)) for v in VARIANTS],
-                runtime=dict(max_workers=2, start_ram_gib=1.5, two_workers_ram_gib=4.,
+                runtime=dict(max_workers=4, local_workers=0, start_ram_gib=1.5, two_workers_ram_gib=4.,
                              pause_ram_gib=.5, worker_wall_s=1200, coordinator_wall_s=2700),
                 primary_interactions=65536, gamma_fixed=1., heldout_test_executed=False,
                 claim="Single-seed training diagnostic only, not a fair algorithm ranking",
@@ -64,6 +65,8 @@ def directory(root, case):
 
 
 def run(root, plan):
+    if plan.get("execution") == "github-only-four-standard-cpu-jobs":
+        raise ValueError("Do not duplicate the registered cloud cases locally")
     pending, active = list(plan["cases"]), []
     logs = root/"logs"
     logs.mkdir(exist_ok=False)
@@ -136,6 +139,11 @@ def report(root, plan):
     for case in plan["cases"]:
         path=directory(root,case)
         s=case["settings"]
+        if (path/"manifest.json").exists():
+            manifest=h.read_json(path/"manifest.json")
+            cfg,train=pc.configuration(s)
+            if manifest["environment"]!=cfg or manifest["training"]!=train:
+                raise ValueError("Executed physical or estimator configuration differs")
         audit_plan=dict(plan,stages={"probe":[dict(id=path.name,owner="local",settings=s)]},
                         runtime=dict(h.RUNTIME),gate=dict(tail_points=3,max_cost_ratio=1.25,
                                                          max_qos_increase=.05,max_tail_qos=.1))
@@ -197,6 +205,8 @@ def main():
         run(root,plan);return
     if not a.case:
         parser.error("Worker needs --case")
+    if h.free_ram_gib() < plan["runtime"]["start_ram_gib"]:
+        raise RuntimeError("Insufficient memory before starting registered worker")
     case=next(c for c in plan["cases"] if c["variant"]==a.case)
     import paper_convergence as pc
     try:

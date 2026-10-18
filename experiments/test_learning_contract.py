@@ -167,6 +167,15 @@ class LearningContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             registered_settings("control", 9848031)
 
+    def test_cloud_identity_is_explicit_and_separate_from_old_runs(self):
+        from learning_contract_cloud import identity
+        self.assertEqual(identity("Mustard-0/tidal-offload-sim", "learning-contract-20261018T120000Z"),
+                         "contract-campaign-20261018T120000Z")
+        for repo, tag in (("bad/repo/extra", "learning-contract-20261018T120000Z"),
+                          ("Mustard-0/tidal-offload-sim", "paper-long-probe-20261018T090815Z")):
+            with self.assertRaises(ValueError):
+                identity(repo, tag)
+
 
 if __name__ == "__main__":
     unittest.main()

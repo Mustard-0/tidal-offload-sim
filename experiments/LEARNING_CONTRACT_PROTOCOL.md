@@ -19,10 +19,11 @@ unbounded search until TMPPO wins. Preserve all failed outcomes.
 4. Validate at0/32/64/96/128 on both seeds and all three registered phases;
    warmup300/measure1000 slots, drain every cohort. Sampled endpoint diagnostics
    never select models. No final held-out test. All raw traces/checkpoints saved.
-5. At most two local CPU workers; only one when free RAM<4GiB, no start below
-   1.5GiB, update-boundary pause below.5GiB; no user process is ended. Parent
-   temporarily prevents idle sleep and releases it on completion. Each worker
-   wall budget1200s, parent2700s. No automatic cloud/formal/2000-update run.
+5. Exactly four standard public ubuntu22.04 CPU jobs, no local training, GPU,
+   paid runner, Actions artifact/cache, or duplicate dispatch. Each worker starts
+   only above1.5GiB RAM and pauses below.5GiB at update boundaries. Worker budget
+   1200s, runner timeout30min; each result goes to the same immutable Release.
+   No automatic formal/2000-update run or blind cloud rerun/resume.
 6. Every cell must pass raw integrity accounting independently. A potential
    follow-up is limited to control and one candidate on seed87035, only if the
    candidate's last-three-point mean is >=1% below initialization and its mean

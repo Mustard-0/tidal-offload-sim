@@ -72,6 +72,7 @@ def code_hashes():
                               "experiments/PAPER_FOUR_STUDIES_PROTOCOL.md",
                               ".github/workflows/paper_hybrid.yml")]
     paths += list((ROOT/".github/workflows").glob("*long_probe*.yml"))
+    paths += list((ROOT/".github/workflows").glob("*learning_contract*.yml"))
     if (ROOT/"experiments/LONG_PROBE_2000_PROTOCOL.md").exists():
         paths.append(ROOT/"experiments/LONG_PROBE_2000_PROTOCOL.md")
     if (ROOT/"experiments/LEARNING_CONTRACT_PROTOCOL.md").exists():
