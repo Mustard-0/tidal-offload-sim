@@ -1,8 +1,8 @@
 """Cross-slot adapters; legacy learners and old experiment outputs stay intact.
 
 The TD3 adapter uses recurrent decision histories, twin attention critics,
-delayed updates and target smoothing. Discrete actions use a straight-through
-relaxation, not the original paper's continuous resource allocation.
+delayed updates and target smoothing. Discrete actions use an explicitly
+registered surrogate, not the original paper's continuous resource allocation.
 """
 from collections import deque
 import copy
@@ -26,7 +26,42 @@ def cross_slot_prior(stage, obs, cfg, scale):
     return -scale * torch.stack((wait, obs[:, 17], obs[:, 18]), dim=-1)
 
 
+def training_clock(remaining, arrivals_remaining, total):
+    if total <= 0 or not 0 <= arrivals_remaining <= remaining <= total:
+        raise ValueError("Invalid finite training horizon")
+    return np.asarray([remaining/total, arrivals_remaining/total], dtype=np.float32)
+
+
 class CrossSlotPPO(PPO):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.steps = 0
+        self.training_clock = np.zeros(2, np.float32)
+
+    def set_training_clock(self, remaining, arrivals_remaining, total):
+        self.training_clock = training_clock(remaining, arrivals_remaining, total)
+
+    def critic_input(self, context, glob):
+        inputs = super().critic_input(context, glob)
+        if self.cfg.get("critic_clock_features", 0):
+            inputs = np.concatenate([inputs, np.broadcast_to(self.training_clock,
+                                                              (len(inputs), 2))], axis=1)
+        return inputs
+
+    def remember(self, reward, records, done):
+        super().remember(reward, records, done)
+        self.steps += 1
+
+    def state(self, for_evaluation=False):
+        result = super().state(for_evaluation)
+        result.update(training_steps=self.steps, training_clock=self.training_clock.copy())
+        return result
+
+    def load(self, state):
+        super().load(state)
+        self.steps = state.get("training_steps", 0)
+        self.training_clock = np.asarray(state.get("training_clock", [0., 0.]), np.float32).copy()
+
     def policy_logits(self, stage, obs):
         return self.actors[stage](obs) + cross_slot_prior(
             stage, obs, self.env_cfg, self.cfg["actor_cost_prior_scale"])
@@ -55,6 +90,7 @@ class CrossSlotPPO(PPO):
                     counts[name] += 1
                     actions[name][row["action"]] += 1
         result = super().update(context, glob)
+        result["actor_frozen"] = float(self.steps < self.cfg.get("actor_warmup_steps", 0))
         for name in counts:
             result[name + "_trainable_decisions"] = counts[name]
             for action, count in enumerate(actions[name]):
@@ -63,7 +99,7 @@ class CrossSlotPPO(PPO):
 
 
 class CrossSlotTD3(MATD3):
-    """Event-time discrete TD3 adaptation, with explicitly approximate ST actor.
+    """Event-time discrete TD3 adaptation, with an explicit discrete surrogate.
 
     Each (agent, stage, public class) stream has its own recurrent history.
     Transitions close at its next actual decision, accumulating discounted
@@ -80,6 +116,10 @@ class CrossSlotTD3(MATD3):
         self.previous_actions = {}
         self.slot_records = []
         self.clock = 0
+        self.training_clock = np.zeros(2, np.float32)
+
+    def set_training_clock(self, remaining, arrivals_remaining, total):
+        self.training_clock = training_clock(remaining, arrivals_remaining, total)
 
     def reset_history(self):
         self.histories = {}
@@ -90,6 +130,8 @@ class CrossSlotTD3(MATD3):
     def begin(self, context, glob, n_user):
         self.n_user = n_user
         self.global_obs = np.asarray(glob, dtype=np.float32).copy()
+        if self.cfg.get("critic_clock_features", 0):
+            self.global_obs = np.r_[self.global_obs, self.training_clock]
         self.slot_records = []
 
     def _key(self, agent, stage, obs):
@@ -165,6 +207,10 @@ class CrossSlotTD3(MATD3):
         for i, (mask, stage) in enumerate(zip(masks, stages)):
             marker[i, STAGE_SLICES[stage]] = mask
             marker[i, 32] = float(stage == "route")
+        if self.cfg.get("critic_clock_features", 0):
+            clock = glob[:, -2:]
+            ob = torch.cat((ob, clock), dim=1)
+            marker = torch.cat((marker, clock), dim=1)
         tokens = torch.stack((ob, glob, marker), dim=1)
         acts = torch.stack((action, torch.zeros_like(action), torch.zeros_like(action)), dim=1)
         return q(tokens, acts)[:, 0]
@@ -244,7 +290,8 @@ class CrossSlotTD3(MATD3):
             self.copt.step()
             losses.append(float(loss.detach()))
             self.updates += 1
-            if self.updates % c["td3_policy_delay"] == 0:
+            if (self.updates % c["td3_policy_delay"] == 0 and
+                    self.steps >= c.get("actor_warmup_steps", 0)):
                 for p in self.q.parameters():
                     p.requires_grad_(False)
                 if c.get("td3_discrete_objective", "straight_through") == "categorical_expectation":
@@ -261,17 +308,20 @@ class CrossSlotTD3(MATD3):
                 actor_losses.append(float(aloss.detach()))
                 for p in self.q.parameters():
                     p.requires_grad_(True)
+            if self.updates % c["td3_policy_delay"] == 0:
                 with torch.no_grad():
                     for source, target_model in ((self.actor, self.target_actor), (self.q, self.target_q)):
                         for source_p, target_p in zip(source.parameters(), target_model.parameters()):
                             target_p.lerp_(source_p, c["td3_tau"])
         return dict(td3_critic_loss=float(np.mean(losses)), td3_updates=self.updates,
                     td3_actor_loss=float(np.mean(actor_losses)) if actor_losses else 0.,
-                    td3_replay=len(self.replay))
+                    td3_replay=len(self.replay),
+                    actor_frozen=float(self.steps < c.get("actor_warmup_steps", 0)))
 
     def state(self, for_evaluation=False):
         result = super().state(for_evaluation)
         result.update(schema=self.schema, clock=self.clock,
+                      training_clock=self.training_clock.copy(),
                       discrete_objective=self.cfg.get("td3_discrete_objective", "straight_through"),
                       histories={} if for_evaluation else copy.deepcopy(self.histories),
                       open_events={} if for_evaluation else copy.deepcopy(self.open_events),
@@ -286,6 +336,7 @@ class CrossSlotTD3(MATD3):
             raise ValueError("Checkpoint uses a different discrete actor objective")
         super().load(state)
         self.clock = state["clock"]
+        self.training_clock = np.asarray(state.get("training_clock", [0., 0.]), np.float32).copy()
         self.histories = copy.deepcopy(state["histories"])
         self.open_events = copy.deepcopy(state["open_events"])
         self.previous_actions = copy.deepcopy(state["previous_actions"])

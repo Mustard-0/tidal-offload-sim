@@ -79,12 +79,12 @@ def command(args, **kwargs):
 
 
 def settings(stage, method, lr, seed):
-    return dict(method=method, lr=lr, seed=seed, updates=128 if stage == "screen" else 2000,
+    return dict(method=method, lr=lr, seed=seed, updates=64 if stage == "screen" else 2000,
                 rollout=128, episode_steps=2048 if stage == "screen" else 6000,
                 phase_count=5, validate_every=16 if stage == "screen" else 100,
                 validation_steps=500 if stage == "screen" else 1000, warmup_steps=300,
                 validation_seeds=[814001, 814019], validation_phases=[30., 130., 230.],
-                training_profile="team_v2", checkpoint_every=25, schedule_updates=2000,
+                training_profile="credit_v3", checkpoint_every=25, schedule_updates=2000,
                 policy_diagnostics=True,
                 validation_objective="pooled_task_cost",
                 baseline_diagnostics=method == "TMPPO" and lr == 1 and seed == SEEDS[0])
@@ -435,6 +435,10 @@ def gate(plan, root, stage="screen"):
             if train_config.get("local_credit_fraction") != 0. or train_config.get(
                     "td3_discrete_objective") != "categorical_expectation":
                 raise ValueError("Worker did not use the declared team_v2 profile")
+            if expected.get("training_profile") == "credit_v3" and (
+                    train_config.get("critic_clock_features") != 2 or
+                    train_config.get("actor_warmup_steps") != 2048):
+                raise ValueError("Worker omitted the finite-horizon critic or actor burn-in")
             trainings.add(digest(train_config))
             train = list(rows(path/"train.csv"))
             if [int(r["update"]) for r in train] != list(range(1, expected["updates"]+1)):
@@ -517,7 +521,13 @@ def bundle_screen(plan, root):
 
 def extract_evidence(archive, destination):
     destination = destination.resolve()
-    destination.mkdir(parents=True, exist_ok=False)
+    # Windows' normal path limit can be exceeded by nested source snapshots.
+    filesystem_destination = destination
+    if os.name == "nt" and not str(destination).startswith("\\\\?\\"):
+        absolute = str(destination)
+        filesystem_destination = Path("\\\\?\\UNC\\" + absolute[2:] if absolute.startswith("\\\\")
+                                      else "\\\\?\\" + absolute)
+    filesystem_destination.mkdir(parents=True, exist_ok=False)
     with zipfile.ZipFile(archive) as zipped:
         seen = set()
         for member in zipped.infolist():
@@ -527,7 +537,7 @@ def extract_evidence(archive, destination):
                     (member.external_attr >> 16) & 0o170000 == 0o120000):
                 raise ValueError("Unsafe or duplicate evidence archive member")
             seen.add(target)
-        zipped.extractall(destination)
+        zipped.extractall(filesystem_destination)
 
 
 def collect(plan, root, incoming, stage):
@@ -639,20 +649,20 @@ def wait_cloud(plan, root, repo, stage):
             write_json(root/(stage+"_cloud_run.json"), run)
             details = gh_json(["api", "repos/"+repo+"/actions/runs/"+str(run["databaseId"])], None)
             attempt = details["run_attempt"]
-            incoming = root/"incoming"/("%s_%s_attempt%s" % (stage, run["databaseId"], attempt))
+            incoming = root/"incoming"/("%s%s_a%s" % (stage[0], run["databaseId"], attempt))
             if (incoming/"download.json").exists():
                 data = incoming/read_json(incoming/"download.json")["data_directory"]
                 if not data.resolve().is_relative_to(incoming.resolve()):
                     raise ValueError("Invalid saved transfer directory")
             else:
-                data = incoming/("transfer_"+str(time.time_ns()))
+                data = incoming/("x"+str(time.time_ns()))
                 archives = data/"archives"
                 archives.mkdir(parents=True)
                 command(["gh", "release", "download", plan["campaign"], "--repo", repo,
                          "--pattern", "%s_*_run%s_attempt%s.zip" % (stage, run["databaseId"], attempt),
                          "--dir", archives])
-                for archive in archives.glob("*.zip"):
-                    extract_evidence(archive, data/archive.stem)
+                for index, archive in enumerate(sorted(archives.glob("*.zip"))):
+                    extract_evidence(archive, data/("d%d" % index))
                 write_json(incoming/"download.json", dict(data_directory=data.name))
             if run["conclusion"] != "success":
                 raise RuntimeError("Cloud stage failed/paused; downloaded all available artifacts for inspection")
@@ -663,6 +673,8 @@ def wait_cloud(plan, root, repo, stage):
 
 
 def coordinate(plan, root, repo, auto_formal=False):
+    if auto_formal:
+        raise ValueError("credit_v3 is a bounded repair pilot; formal dispatch requires a new reviewed authorization")
     with awake_lock(root):
         ensure_release(plan, root, repo)
         for stage in ("screen", "formal"):

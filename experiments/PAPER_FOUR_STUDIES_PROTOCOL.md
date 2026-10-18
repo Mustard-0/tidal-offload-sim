@@ -18,17 +18,32 @@ TMPPO, IPPO and MARATD3-Adapted each use two actor/critic learning rates:
 1e-4/3e-4 and 3e-4/1e-3. Training seeds are 87021, 87035 and 87049.
 Validation uses seeds 814001/814019 and phases 30/130/230 seconds.
 
-The finite screen uses six cells, one training seed, 128 updates x128 global
+The credit_v3 repair pilot uses six cells, one training seed, 64 updates x128 global
 slots. The formal budget uses eighteen cells, 2000 updates x128 slots each.
 Both use the predeclared 2000-update learning-rate schedule. Full replay
 checkpoints are saved every25 updates, validation, pause and completion;
 scalar progress and training CSVs are saved every update.
 
-The team_v2 profile uses shared team rewards and a discrete categorical actor
+The credit_v3 profile retains shared team rewards and a discrete categorical actor
 surrogate for the TD3 adaptation. Validation selection uses total measured
 task cost divided by total generated tasks, including the update0 candidate.
 Random-action diagnostics do not select checkpoints. All training seeds have
 equal weight in final seed-level means and standard deviations.
+
+The finite training episode's remaining total slots and remaining arrival slots
+are critic-only features. They never enter decentralized actor observations or
+change the physical workload. All three actors remain frozen for the first
+2048 global slots while their critics learn. This burn-in is included, not hidden
+outside the interaction budget. It is a numerical stabilization hypothesis,
+not evidence of a repaired objective or a guarantee of improvement. The original
+team_v2 pilot and all raw outputs remain in their separate frozen directory.
+
+Deterministic argmax remains the checkpoint-selection policy. A counter-keyed
+sampled policy is evaluated on the same validation trajectories at every pilot
+checkpoint, labelled diagnostic only. Mode selection and test-seed selection
+after observing results are prohibited. No smoothing is used to hide regression.
+Only this one bounded six-cell repair pilot is authorized in this revision;
+automatic formal dispatch is disabled even if its stability gate passes.
 
 The screen gate checks raw task accounting, pairing, source/config/runtime
 identity and checkpoint selection. All six cells must finish and remain

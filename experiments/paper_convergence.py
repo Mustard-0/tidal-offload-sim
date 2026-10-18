@@ -209,7 +209,9 @@ def validation_snapshot(method, learner, train, cfg, settings, update, out, base
                     raise AssertionError("Unpaired validation arrivals")
         # This diagnostic never participates in checkpoint selection. Reset
         # action RNG for each trace; restore training RNG in the outer finally.
-        if settings.get("policy_diagnostics", False) and update in (0, settings["updates"]):
+        if settings.get("policy_diagnostics", False) and (
+                update in (0, settings["updates"]) or
+                settings.get("training_profile") == "credit_v3"):
             for seed in settings["validation_seeds"]:
                 for phase in settings["validation_phases"]:
                     action_seed = int(np.random.SeedSequence(
@@ -242,12 +244,14 @@ def configuration(settings):
                  td3_replay_slots=4096, td3_batch=16, td3_update_every=8)
     train["actor_lr"], train["critic_lr"] = LEARNING_RATES[settings["lr"]-1]
     profile = settings.get("training_profile", "audit_v1")
-    if profile == "team_v2":
+    if profile in ("team_v2", "credit_v3"):
         # Conserving mean local rewards does not preserve the gradient of the
         # cooperative objective when a decision changes other users' queues.
         train.update(local_credit_fraction=0., linear_lr_decay=True,
                      lr_final_fraction=.1, td3_huber=True,
                      td3_discrete_objective="categorical_expectation")
+        if profile == "credit_v3":
+            train.update(critic_clock_features=2, actor_warmup_steps=2048)
     elif profile != "audit_v1":
         raise ValueError("Unknown training profile")
     return cfg, train
@@ -394,6 +398,11 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
     if not resume:
         validate(0)
         checkpoint(0)
+    def set_clock():
+        remaining = settings["episode_steps"] - sim.slot
+        arrivals_remaining = max(0, remaining - math.ceil(cfg["lifetime_s"]/cfg["dt_s"]) - 1)
+        learner.set_training_clock(remaining, arrivals_remaining, settings["episode_steps"])
+
     for update in range(start_update+1, settings["updates"]+1):
         tick = time.monotonic()
         rewards = []
@@ -406,12 +415,14 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
                 episode += 1
                 learner.reset_history()
                 sim = new_environment(cfg, settings["seed"], episode, settings["phase_count"])
+            set_clock()
             arrivals = sim.slot < settings["episode_steps"] - math.ceil(cfg["lifetime_s"]/cfg["dt_s"])-1
             reward, records, _, _ = sim.step(learner, arrivals=arrivals)
             done = sim.slot == settings["episode_steps"]
             learner.remember(sim.agent_rewards(train.get("local_credit_fraction",.7)), records, done)
             rewards.append(reward)
         ctx, glob, *_ = sim.observations()
+        set_clock()
         diag = learner.update(ctx, glob)
         if not np.isfinite(rewards).all() or any(not np.isfinite(v) for v in diag.values()):
             raise FloatingPointError("Nonfinite training diagnostics")
@@ -460,7 +471,7 @@ def report(root):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     root = Path(root)
-    summaries, paired, seed_points = [], {}, []
+    summaries, paired, seed_points, mode_points = [], {}, [], []
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     completed = 0
     durations = []
@@ -478,6 +489,16 @@ def report(root):
         for index, point in enumerate(points):
             seed_points.append(dict(method=s["method"],lr=s["lr"],train_seed=s["seed"],
                                     env_steps=point,**{key:values[index] for key,values in series.items()}))
+        for mode, label in (("argmax", s["method"]),
+                            ("sampled", s["method"]+":sampled-diagnostic")):
+            selected_mode = [r for r in val if r["method"] == label]
+            for step in sorted({int(r["env_steps"]) for r in selected_mode}):
+                group = [r for r in selected_mode if int(r["env_steps"]) == step]
+                mode_points.append(dict(method=s["method"], lr=s["lr"], train_seed=s["seed"],
+                    mode=mode, env_steps=step,
+                    **{key:validation_mean(group,key,objective) for key in
+                       ("mean_task_cost","qos_rate","objective_time","objective_energy",
+                        "objective_quality","publication_ratio")}))
         for r in val:
             if r["method"] == s["method"]:
                 key = (r["seed"],r["phase_s"],r["env_steps"])
@@ -498,8 +519,9 @@ def report(root):
             row["validation_improvement_percent"] = 100*(row["initial_cost"]-row["mean_task_cost"])/row["initial_cost"]
             row["tail_validation_cost_std"] = float(np.std(series["mean_task_cost"][-3:]))
             threshold = row["initial_cost"] - .95*(row["initial_cost"]-row["mean_task_cost"])
-            row["observed_95percent_improvement_steps"] = next((x for x,y in zip(points,series["mean_task_cost"])
-                                                               if y<=threshold),None)
+            row["observed_95percent_improvement_steps"] = (
+                next((x for x,y in zip(points,series["mean_task_cost"]) if y<=threshold),None)
+                if selection["update"] > 0 and row["validation_improvement_percent"] > 0 else None)
             train_rows = read_csv(cell/"train.csv")
             seconds_per_step = sum(float(r["update_wall_s"]) for r in train_rows)/complete["env_steps"]
             row["training_seconds_per_global_step"] = seconds_per_step
@@ -542,6 +564,23 @@ def report(root):
     csv_write(root/"summary.csv", summaries)
     csv_write(root/"convergence_by_seed.csv",seed_points)
     csv_write(root/"convergence_aggregate.csv",aggregate)
+    csv_write(root/"policy_mode_diagnostics.csv",mode_points)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4), sharey=True)
+    for ax, method in zip(axes, METHODS):
+        for lr in (1,2):
+            for mode, style in (("argmax","-"),("sampled","--")):
+                records = [r for r in mode_points if r["method"]==method and r["lr"]==lr
+                           and r["mode"]==mode]
+                xs = sorted({r["env_steps"] for r in records})
+                ys = [np.mean([r["mean_task_cost"] for r in records if r["env_steps"]==x]) for x in xs]
+                ax.plot(xs,ys,style,color="C%d" % (lr-1),label="LR%d %s" % (lr,mode))
+        ax.set(title=method, xlabel="Global environment interactions", ylabel="Validation cost")
+        ax.grid(alpha=.2)
+        ax.legend(fontsize=7)
+    fig.suptitle("Policy-mode diagnostics; sampled curves never select checkpoints")
+    fig.tight_layout()
+    fig.savefig(root/"policy_mode_diagnostics.png",dpi=160)
+    plt.close(fig)
     candidates = {}
     for lr in (1,2):
         rows = [r for r in summaries if r["method"]=="TMPPO" and r["lr"]==lr]
@@ -595,7 +634,7 @@ def main():
     parser.add_argument("--wall-seconds", type=float, default=600.)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--allow-long-cell", action="store_true")
-    parser.add_argument("--training-profile", choices=("audit_v1", "team_v2"), default="audit_v1")
+    parser.add_argument("--training-profile", choices=("audit_v1", "team_v2", "credit_v3"), default="audit_v1")
     parser.add_argument("--checkpoint-every", type=int, default=1)
     parser.add_argument("--schedule-updates", type=int)
     parser.add_argument("--policy-diagnostics", action="store_true")

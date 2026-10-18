@@ -42,7 +42,8 @@ def fixture(root):
         actor, critic = ((1e-4, 3e-4), (3e-4, 1e-3))[s["lr"]-1]
         hybrid.write_json(directory/"manifest.json", dict(settings=s, environment=cfg,
             training=dict(actor_lr=actor, critic_lr=critic, local_credit_fraction=0.,
-                          td3_discrete_objective="categorical_expectation"),
+                          td3_discrete_objective="categorical_expectation",
+                          critic_clock_features=2,actor_warmup_steps=2048),
             runtime=runtime, source_commit=plan["commit"], source_hashes=sources))
         hybrid.write_json(directory/"complete.json", dict(updates=2, env_steps=16))
         hybrid.write_json(directory/"selection.json", dict(update=0, validation_cost=.5, test_used=False))
@@ -88,7 +89,7 @@ class HybridCampaignTests(unittest.TestCase):
             cmd = hybrid.worker_command(plan["stages"]["formal"][0], out, plan, "formal")
             self.assertIn("--allow-long-cell", cmd)
             self.assertIn("--phase-count", cmd)
-            self.assertEqual(cmd[cmd.index("--training-profile")+1], "team_v2")
+            self.assertEqual(cmd[cmd.index("--training-profile")+1], "credit_v3")
             self.assertNotIn("--validation-seeds", cmd)
             out.mkdir()
             with self.assertRaises(ValueError):

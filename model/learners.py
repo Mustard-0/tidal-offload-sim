@@ -90,7 +90,8 @@ class PPO:
         for actor in self.actors.values():
             nn.init.zeros_(actor[-1].weight)
             nn.init.zeros_(actor[-1].bias)
-        self.critic = mlp(OBS_DIM if method in ("IPPO", "DPFL-Adapted") else 2*OBS_DIM,h,1).to(device)
+        critic_dim = OBS_DIM if method in ("IPPO", "DPFL-Adapted") else 2*OBS_DIM
+        self.critic = mlp(critic_dim+cfg.get("critic_clock_features",0),h,1).to(device)
         self.value_norm = ReturnNormalizer(cfg.get("value_normalization", False))
         self.aopt = torch.optim.Adam(self.actors.parameters(),lr=cfg["actor_lr"])
         self.copt = torch.optim.Adam(self.critic.parameters(),lr=cfg["critic_lr"])
@@ -178,7 +179,8 @@ class PPO:
                 self.copt.step(); stats["value_loss"].append(loss.item())
             for stage in ("user","batch","route"):
                 rows = [r for r in actor_rows if r["stage"]==stage]
-                if not rows or stage in stopped_stages:
+                if (not rows or stage in stopped_stages or
+                        getattr(self,"steps",0) < c.get("actor_warmup_steps",0)):
                     continue
                 ob=self.tensor(np.stack([r["obs"] for r in rows])); mask=self.tensor(np.stack([r["mask"] for r in rows]),torch.bool)
                 actions=self.tensor([r["action"] for r in rows],torch.long)
@@ -236,9 +238,9 @@ class RecurrentActor(nn.Module):
 
 
 class AttentionCritic(nn.Module):
-    def __init__(self,h):
+    def __init__(self,h,extra_obs=0):
         super().__init__()
-        self.embed=nn.Linear(OBS_DIM+CONTROL_DIM,h)
+        self.embed=nn.Linear(OBS_DIM+extra_obs+CONTROL_DIM,h)
         self.attn=nn.MultiheadAttention(h,4,batch_first=True)
         self.head=nn.Sequential(nn.Linear(h,h),nn.ReLU(),nn.Linear(h,1))
 
@@ -259,7 +261,8 @@ class MATD3:
         self.method,self.cfg,self.env_cfg=method,cfg,env_cfg
         self.device=torch.device(device); h=cfg["hidden"]
         self.actor=RecurrentActor(h).to(device)
-        self.q=nn.ModuleList([AttentionCritic(h),AttentionCritic(h)]).to(device)
+        self.q=nn.ModuleList([AttentionCritic(h,cfg.get("critic_clock_features",0)),
+                              AttentionCritic(h,cfg.get("critic_clock_features",0))]).to(device)
         self.target_actor=copy.deepcopy(self.actor); self.target_q=copy.deepcopy(self.q)
         self.aopt=torch.optim.Adam(self.actor.parameters(),lr=cfg["actor_lr"])
         self.copt=torch.optim.Adam(self.q.parameters(),lr=cfg["critic_lr"])
