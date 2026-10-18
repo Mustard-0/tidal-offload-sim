@@ -176,6 +176,14 @@ class HybridCampaignTests(unittest.TestCase):
                     hybrid.ensure_release({}, Path(tmp), "owner/private")
                 command.assert_not_called()
 
+    def test_repository_view_uses_positional_repository_argument(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(hybrid, "command", return_value='{"isPrivate":true}') as command:
+                with self.assertRaises(ValueError):
+                    hybrid.ensure_release({}, Path(tmp), "owner/private")
+                self.assertEqual(command.call_args[0][0],
+                    ["gh", "repo", "view", "owner/private", "--json", "isPrivate,nameWithOwner"])
+
     def test_cloud_outputs_use_release_archives_with_exact_run_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

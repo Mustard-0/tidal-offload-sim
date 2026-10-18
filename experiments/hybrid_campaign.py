@@ -590,7 +590,7 @@ def stage_tag(plan, stage):
 
 
 def ensure_release(plan, root, repo):
-    info = gh_json(["repo", "view", "--json", "isPrivate,nameWithOwner"], repo)
+    info = gh_json(["repo", "view", repo, "--json", "isPrivate,nameWithOwner"], None)
     if info["isPrivate"]:
         raise ValueError("Free-only cloud mode requires a reviewed public code repository; no visibility change is automatic")
     remote = command(["git", "remote", "get-url", "origin"])
