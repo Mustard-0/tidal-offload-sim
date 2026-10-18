@@ -12,7 +12,7 @@ import hashlib
 import math
 import numpy as np
 
-from physics import candidate_nodes, propagation, rate
+from physics import candidate_nodes, candidate_matrix, propagation, rate
 from privacy import amplification_threshold, local_epsilon
 from workload import expected_batch_fill_s, tide_factors, validate_environment
 
@@ -202,16 +202,29 @@ class Environment:
         reserved_count, reserved_work = reservations if reservations is not None else (
             np.zeros(N_ROUTE, dtype=int), np.zeros(N_ROUTE))
         capacity_mask = np.ones(N_ROUTE, dtype=bool)
+        physics_cache = None
+        if c.get("cache_route_physics", False):
+            stamp = (self.time, self.phase_s)
+            if getattr(self, "_physics_cache_stamp", None) != stamp:
+                self._physics_cache_stamp, self._route_physics_cache = stamp, {}
+            physics_cache = self._route_physics_cache
         for node in range(N_ROUTE):
-            tx = j.bits / rate(c, xy, node, self.time+self.phase_s,
-                               by_node[node]+reserved_count[node]+1, by_user[j.user]+1)
+            key = (float(xy[0]), float(xy[1]), node,
+                   int(by_node[node]+reserved_count[node]+1), int(by_user[j.user]+1))
+            pair = physics_cache.get(key) if physics_cache is not None else None
+            if pair is None:
+                pair = (rate(c, xy, node, self.time+self.phase_s, key[3], key[4]),
+                        propagation(c, xy, node, self.time+self.phase_s))
+                if physics_cache is not None:
+                    physics_cache[key] = pair
+            tx = j.bits / pair[0]
             cpu = c["cpu_bs"] if node < self.b else c["cpu_sat"]
             queued_cycles = queued_work[node]+committed_work[node]+reserved_work[node]
             queue[node] = queued_cycles/cpu
             if reservations is not None:
                 capacity_mask[node] = (queued_cycles+j.cycles <=
                     c["queue_cap_s"][self.node_kind(self.u+node)]*cpu+1e-5)
-            prop = propagation(c, xy, node, self.time+self.phase_s)
+            prop = pair[1]
             times[node] = tx+queue[node]+j.cycles/cpu+2*prop
             energy[node] = tx*c["user_power_w"]/max(1, by_user[j.user]+1)+j.cycles*c["energy_per_cycle"][1 if node<self.b else 2]
         age = self.time-j.arrival
@@ -255,7 +268,8 @@ class Environment:
     def _observations(self):
         c = self.cfg
         if self.visibility_time != self.time:
-            self.visibility = np.stack([candidate_nodes(c, g, self.time+self.phase_s) for g in range(self.g)])
+            self.visibility = (candidate_matrix(c, self.time+self.phase_s) if c.get("cache_route_physics", False)
+                               else np.stack([candidate_nodes(c, g, self.time+self.phase_s) for g in range(self.g)]))
             self.visibility_time = self.time
         obs = np.zeros((self.u+self.g, OBS_DIM), np.float32)
         masks = np.ones((self.u, 3), bool)
@@ -278,13 +292,14 @@ class Environment:
         pred_error = np.mean(self.pred_error, axis=0) if self.pred_error else np.zeros(self.g)
         public_cost = {}
         _, by_user = self.link_counts()
+        bs_mean, bs_max = node_work[:self.b].mean()/.1, node_work[:self.b].max()/.1
+        sat_mean = node_work[self.b:].mean()/.1
         for user, pending in enumerate(self.pending):
             g = self.region[user]
             own_work = self.work(user)/c["cpu_ue"]
             obs[user, :12] = [len(pending)/20, own_work/.5, pools[g]/c["users_per_region"],
                               self.last_observed[g]/rate_scale, predicted[g]/rate_scale, pred_error[g]/rate_scale,
-                              g/2, node_work[:self.b].mean()/.1, node_work[:self.b].max()/.1,
-                              node_work[self.b:].mean()/.1, 0, 0]
+                              g/2, bs_mean, bs_max, sat_mean, 0, 0]
             if pending:
                 j = self.tasks[pending[0]]
                 if j.hol_time < 0:

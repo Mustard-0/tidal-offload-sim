@@ -48,6 +48,21 @@ def candidate_nodes(cfg, region, time_s):
     return np.r_[ground, visible]
 
 
+def candidate_matrix(cfg, time_s):
+    """Same conservative coverage test for all regions in one array operation."""
+    centers = np.asarray(cfg["region_centers_m"])
+    ground = (np.linalg.norm(np.asarray(cfg["bs_xy_m"])[None, :, :]-centers[:, None, :], axis=2)
+              + cfg["region_radius_m"] <= cfg["bs_coverage_m"])
+    times = np.linspace(time_s, time_s+cfg["lifetime_s"], 11)
+    xyz = np.stack([satellites(cfg, t) for t in times])
+    horizontal = np.linalg.norm(xyz[:, None, :, :2]-centers[None, :, None, :], axis=3)
+    horizontal += cfg["region_radius_m"]
+    elevation = np.arctan2(xyz[:, None, :, 2], horizontal)
+    margin = 8500. / cfg["sat_height_m"] * cfg["lifetime_s"] / 20
+    visible = np.all(elevation-margin >= np.deg2rad(cfg["sat_min_elevation_deg"]), axis=0)
+    return np.concatenate((ground, visible), axis=1)
+
+
 def rate(cfg, xy, node, time_s, node_shares=1, user_shares=1):
     n_bs = len(cfg["bs_xy_m"])
     if node < n_bs:

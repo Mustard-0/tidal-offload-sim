@@ -45,6 +45,8 @@ SOURCE_FILES = tuple(sorted(set(
     list((ROOT/"experiments").glob("LEARNING_CONTRACT_PROTOCOL.md")))))
 if (ROOT/"experiments/FOUR_CURVE_PROTOCOL.md").exists():
     SOURCE_FILES += (ROOT/"experiments/FOUR_CURVE_PROTOCOL.md",)
+if (ROOT/"experiments/PAPER2500_PROTOCOL.md").exists():
+    SOURCE_FILES += (ROOT/"experiments/PAPER2500_PROTOCOL.md",)
 
 
 def free_ram_gib():
@@ -84,6 +86,31 @@ def csv_write(path, rows):
     replace_file(temp, path)
 
 
+def csv_append(path, rows):
+    """Append immutable scalar records; validate the existing column contract."""
+    if not rows:
+        return
+    fields = list(rows[0])
+    exists = path.exists()
+    if exists:
+        with path.open(encoding="utf-8", newline="") as stream:
+            if next(csv.reader(stream), None) != fields:
+                raise ValueError("Append CSV column contract changed")
+    if any(list(row) != fields for row in rows):
+        raise ValueError("Append CSV rows have different columns")
+    with path.open("a", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        if not exists:
+            writer.writeheader()
+        writer.writerows(rows)
+        stream.flush()
+
+
+def interaction_steps(settings, update):
+    return min(update * settings["rollout"], settings.get(
+        "total_env_steps", settings["updates"] * settings["rollout"]))
+
+
 def source_hashes():
     return {str(p.relative_to(ROOT)).replace("\\", "/"): hashlib.sha256(source_bytes(p)).hexdigest()
             for p in SOURCE_FILES}
@@ -95,9 +122,12 @@ def source_bytes(path):
 
 
 def learner_for(method, train, cfg):
+    if method == "MATORA-DQN-Adapted":
+        from cross_slot_dqn import CrossSlotDQN
+        return CrossSlotDQN(method, train, cfg, device="cpu")
     if method == "MARATD3-Adapted":
         return CrossSlotTD3(method, train, cfg, device="cpu")
-    return CrossSlotPPO("TMAPO" if method == "TMPPO" else "IPPO", train, cfg, device="cpu")
+    return CrossSlotPPO("TMAPO" if method in ("TMPPO", "NoTidal") else "IPPO", train, cfg, device="cpu")
 
 
 def rng_state():
@@ -126,8 +156,8 @@ def validation_mean(rows, key, objective="equal_scenario_cost"):
 
 
 def evaluate(policy, cfg, seed, phase, measure_steps, warmup_steps, collect=False,
-             deterministic=True):
-    env = CrossSlotWLOEnvironment(cfg, seed=seed, phase_s=phase,
+             deterministic=True, environment_method="TMAPO"):
+    env = CrossSlotWLOEnvironment(cfg, seed=seed, phase_s=phase, method=environment_method,
                                  measure_start=warmup_steps * cfg["dt_s"],
                                  measure_end=(warmup_steps + measure_steps) * cfg["dt_s"],
                                  collect=collect)
@@ -204,7 +234,7 @@ def validation_snapshot(method, learner, train, cfg, settings, update, out, base
                 for label, policy in policies:
                     m, env = evaluate(policy, cfg, seed, phase, settings["validation_steps"],
                                       settings["warmup_steps"], collect=True)
-                    tag = dict(update=update, env_steps=update*settings["rollout"],
+                    tag = dict(update=update, env_steps=interaction_steps(settings, update),
                                method=label, seed=seed, phase_s=phase)
                     rows.append(dict(tag, **m))
                     tasks.extend(dict(tag, **r) for r in env.rows)
@@ -227,7 +257,7 @@ def validation_snapshot(method, learner, train, cfg, settings, update, out, base
                     torch.manual_seed(action_seed)
                     m, env = evaluate(clone, cfg, seed, phase, settings["validation_steps"],
                                       settings["warmup_steps"], collect=True, deterministic=False)
-                    tag = dict(update=update, env_steps=update*settings["rollout"],
+                    tag = dict(update=update, env_steps=interaction_steps(settings, update),
                                method=method + ":sampled-diagnostic", seed=seed, phase_s=phase)
                     rows.append(dict(tag, **m))
                     tasks.extend(dict(tag, **r) for r in env.rows)
@@ -243,6 +273,14 @@ def validation_snapshot(method, learner, train, cfg, settings, update, out, base
 
 def configuration(settings):
     cfg, train = full_config()
+    overrides = settings.get("environment_overrides", {})
+    allowed = {"users_per_region", "epsilon_req", "hide_tidal_observations",
+               "weight_time", "weight_energy", "weight_quality", "weight_violation"}
+    if set(overrides) - allowed:
+        raise ValueError("Unregistered physical/task/privacy override")
+    cfg.update(overrides)
+    if settings["method"] == "NoTidal":
+        cfg["hide_tidal_observations"] = True
     # Objective, tasks, physics and privacy remain as declared in the protocol.
     # Only a common causal policy initialization and training numerics change.
     train.update(actor_cost_prior_scale=2., value_normalization=True, gamma=1., gae_lambda=.98,
@@ -250,13 +288,13 @@ def configuration(settings):
                  td3_replay_slots=4096, td3_batch=16, td3_update_every=8)
     train["actor_lr"], train["critic_lr"] = LEARNING_RATES[settings["lr"]-1]
     profile = settings.get("training_profile", "audit_v1")
-    if profile in ("team_v2", "credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6", "from_scratch_v7"):
+    if profile in ("team_v2", "credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6", "from_scratch_v7", "paper2500_v8"):
         # Conserving mean local rewards does not preserve the gradient of the
         # cooperative objective when a decision changes other users' queues.
         train.update(local_credit_fraction=0., linear_lr_decay=True,
                      lr_final_fraction=.1, td3_huber=True,
                      td3_discrete_objective="categorical_expectation")
-        if profile in ("credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6", "from_scratch_v7"):
+        if profile in ("credit_v3", "contract_v4", "shared_value_v5", "role_credit_v6", "from_scratch_v7", "paper2500_v8"):
             train.update(critic_clock_features=2, actor_warmup_steps=2048)
         if profile == "contract_v4":
             variants = {"control": (.98, .01), "trace1": (1., .01),
@@ -280,13 +318,16 @@ def configuration(settings):
                 raise ValueError("Unregistered actor-component training diagnostic")
             train.update(gae_lambda=1., entropy=0., record_advantage_diagnostics=True,
                          shared_team_value=True, frozen_actor_stages=frozen[variant])
-        if profile == "from_scratch_v7":
-            if settings["method"] not in ("TMPPO", "IPPO"):
+        if profile in ("from_scratch_v7", "paper2500_v8"):
+            methods = ("TMPPO", "IPPO") if profile == "from_scratch_v7" else ("TMPPO", "IPPO", "NoTidal", "MARATD3-Adapted", "MATORA-DQN-Adapted")
+            if settings["method"] not in methods:
                 raise ValueError("Four-curve profile only registers the two PPO methods")
             train.update(gae_lambda=1., entropy=0., actor_cost_prior_scale=0.,
                          shared_team_value=False, frozen_actor_stages=[],
                          actor_initialization="xavier_small_head_v1", actor_head_gain=.01,
                          actor_init_seed=settings["seed"], record_advantage_diagnostics=True)
+        if profile == "paper2500_v8":
+            cfg["cache_route_physics"] = True
     elif profile != "audit_v1":
         raise ValueError("Unknown training profile")
     return cfg, train
@@ -329,6 +370,10 @@ def train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None):
 def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None):
     out = Path(out)
     cfg, train = configuration(settings)
+    total_steps = settings.get("total_env_steps", settings["updates"] * settings["rollout"])
+    if (not isinstance(total_steps, int) or total_steps <= 0 or
+            math.ceil(total_steps / settings["rollout"]) != settings["updates"]):
+        raise ValueError("Total interaction budget and update count differ")
     if settings["episode_steps"] <= math.ceil(cfg["lifetime_s"]/cfg["dt_s"]) + 2:
         raise ValueError("Episode must leave room to drain the fixed-lifetime task cohort")
     hashes = source_hashes()
@@ -351,8 +396,12 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
                                      device="cpu",torch_threads=1),
                         methods=METHODS, main_modified=False, test_seeds_unused=list(TEST_SEEDS),
                         DP_status="exploratory one-batch accounting; no full-transcript DP proof",
-                        adaptation=train.get("td3_discrete_objective", "straight_through") +
-                                   "; recurrent/attention discrete adaptation, not exact MARATD3",
+                        adaptation=("Distributed event-return DQN; common FCFS instead of original convex allocation; not exact MATORA"
+                                    if settings["method"] == "MATORA-DQN-Adapted" else
+                                    train.get("td3_discrete_objective", "straight_through") +
+                                    "; recurrent/attention discrete adaptation, not exact MARATD3"
+                                    if settings["method"] == "MARATD3-Adapted" else
+                                    "Common masked WLO/route PPO protocol"),
                         source_hash_format="SHA256 of LF-normalized source bytes",
                         checkpoint_rule="minimum " + settings.get("validation_objective", "equal_scenario_cost") +
                                         ", including update 0",
@@ -397,6 +446,7 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
     started = time.monotonic()
     historical_wall = training[-1]["wall_s"] if training else 0.
     latest_checkpoint_update = start_update
+    persisted_training = len(training)
 
     def validate(update):
         nonlocal best, selected
@@ -417,7 +467,7 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
                          wall_s=time.monotonic()-validation_start))+"\n")
 
     def checkpoint(update, durable=True):
-        nonlocal latest_checkpoint_update
+        nonlocal latest_checkpoint_update, persisted_training
         checkpoint_started = time.monotonic()
         if durable:
             save_checkpoint(out/"latest.pt", dict(
@@ -425,10 +475,15 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
                 update=update, best=best, selected=selected, training=training, validation=validation,
                 episodes=episodes, episode_reward_sum=episode_reward_sum))
             latest_checkpoint_update = update
-        csv_write(out/"train.csv", training)
-        json_write(out/"status.json", dict(update=update, env_steps=update*settings["rollout"],
-                   latest_checkpoint_update=latest_checkpoint_update,
-                   best_update=selected, best_validation_cost=best, pid=os.getpid()))
+        if settings.get("append_training_csv", False):
+            csv_append(out/"train.csv", training[persisted_training:])
+            persisted_training = len(training)
+        else:
+            csv_write(out/"train.csv", training)
+        if durable or update % settings.get("status_every", 1) == 0:
+            json_write(out/"status.json", dict(update=update, env_steps=interaction_steps(settings, update),
+                       latest_checkpoint_update=latest_checkpoint_update,
+                       best_update=selected, best_validation_cost=best, pid=os.getpid()))
         with (out/"checkpoint_timing.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(dict(update=update, durable=durable,
                 wall_s=time.monotonic()-checkpoint_started,
@@ -449,7 +504,8 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
         rewards = []
         learner.deterministic = False
         learner.set_progress(update, settings.get("schedule_updates", settings["updates"]))
-        for slot_index in range(settings["rollout"]):
+        slots_this_update = min(settings["rollout"], total_steps - (update-1)*settings["rollout"])
+        for slot_index in range(slots_this_update):
             if sim.slot == settings["episode_steps"]:
                 if sim.tasks:
                     raise AssertionError("Training episode truncated unresolved task costs")
@@ -485,7 +541,7 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
         if not np.isfinite(rewards).all() or any(not np.isfinite(v) for v in diag.values()):
             raise FloatingPointError("Nonfinite training diagnostics")
         ram = free_ram_gib()
-        training.append(dict(update=update, env_steps=update*settings["rollout"], free_ram_gib=ram,
+        training.append(dict(update=update, env_steps=interaction_steps(settings, update), free_ram_gib=ram,
             mean_training_reward=float(np.mean(rewards)), episode=episode, phase_s=sim.phase_s,
             episode_slot=sim.slot, train_trace_hash=sim.arrival_hash,
             arrivals=sim.arrivals, ended=sim.ended, cost_total=sim.cost_total,
@@ -496,7 +552,7 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
         ram = free_ram_gib()
         if update == 1 or update % 8 == 0:
             print("TRAIN", settings["method"], "LR", settings["lr"], "update", update,
-                  "steps", update*settings["rollout"], "seconds", round(time.monotonic()-started,1), flush=True)
+                  "steps", interaction_steps(settings, update), "seconds", round(time.monotonic()-started,1), flush=True)
         reason = ("STOP_AFTER_UPDATE" if (out/"STOP_AFTER_UPDATE").exists() or (out.parent/"STOP_AFTER_UPDATE").exists()
                   else "available RAM below .5GiB" if ram is not None and ram<.5
                   else "wall time budget" if time.monotonic()-started>=wall_seconds
@@ -512,7 +568,7 @@ def _train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None)
     json_write(out/"selection.json", dict(update=selected, validation_cost=best,
                learned_beyond_initialization=selected!=0, test_used=False))
     json_write(out/"complete.json", dict(updates=settings["updates"],
-               env_steps=settings["updates"]*settings["rollout"], best_update=selected,
+               env_steps=total_steps, best_update=selected,
                wall_s=historical_wall+time.monotonic()-started,
                completed_episodes=len(episodes) if settings.get("record_complete_episodes", False) else None))
     if (out/"paused.json").exists():

@@ -322,7 +322,9 @@ class CrossSlotTD3(MATD3):
     def update(self, context=None, glob=None):
         c = self.cfg
         if len(self.replay) < c["td3_batch"] or self.steps < c["td3_start_steps"]:
-            return dict(td3_replay=len(self.replay), td3_updates=self.updates)
+            return dict(td3_critic_loss=0., td3_updates=self.updates, td3_actor_loss=0.,
+                        td3_replay=len(self.replay),
+                        actor_frozen=float(self.steps < c.get("actor_warmup_steps", 0)))
         losses, actor_losses = [], []
         for _ in range(max(1, c["rollout_steps"] // c["td3_update_every"])):
             rows = [self.replay[i] for i in np.random.choice(len(self.replay), c["td3_batch"], False)]

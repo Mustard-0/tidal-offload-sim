@@ -1,0 +1,62 @@
+name: Resumable paper2500 simulation
+run-name: ${{ github.ref_name }}
+on:
+  push:
+    tags: ['paper2500-wave-*']
+permissions:
+  contents: write
+concurrency:
+  group: paper2500-${{ github.ref_name }}
+  cancel-in-progress: false
+env:
+  GH_TOKEN: ${{ github.token }}
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  PYTHONIOENCODING: utf-8
+jobs:
+  prepare:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Exact immutable wave
+        id: plan
+        shell: bash
+        run: |
+          matrix=$(python experiments/paper2500_campaign.py prepare --out runs/segment --tag "$GITHUB_REF_NAME")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+  train:
+    needs: prepare
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 260
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Load immutable plan and checkpoint lineage
+        run: python experiments/paper2500_campaign.py prepare --out runs/segment --tag "$GITHUB_REF_NAME"
+      - name: Exact CPU dependencies
+        run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Bounded segment
+        env:
+          TASK: ${{ matrix.task }}
+        run: python -u experiments/paper2500_campaign.py worker --out runs/segment --task "$TASK" --execute

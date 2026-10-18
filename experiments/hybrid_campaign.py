@@ -79,6 +79,8 @@ def code_hashes():
         paths.append(ROOT/"experiments/LEARNING_CONTRACT_PROTOCOL.md")
     if (ROOT/"experiments/FOUR_CURVE_PROTOCOL.md").exists():
         paths.append(ROOT/"experiments/FOUR_CURVE_PROTOCOL.md")
+    if (ROOT/"experiments/PAPER2500_PROTOCOL.md").exists():
+        paths.append(ROOT/"experiments/PAPER2500_PROTOCOL.md")
     return {p.relative_to(ROOT).as_posix(): file_hash(p, True) for p in sorted(paths)}
 
 
