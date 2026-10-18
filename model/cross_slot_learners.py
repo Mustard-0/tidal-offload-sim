@@ -37,7 +37,8 @@ class CrossSlotPPO(PPO):
         super().__init__(*args, **kwargs)
         self.steps = 0
         self.training_clock = np.zeros(2, np.float32)
-        if self.cfg.get("shared_team_value", False) and self.method != "TMPPO":
+        # The paper's TMPPO label retains TMAPO as its internal factory key.
+        if self.cfg.get("shared_team_value", False) and self.method != "TMAPO":
             raise ValueError("Shared centralized value input is a TMPPO diagnostic only")
 
     def set_training_clock(self, remaining, arrivals_remaining, total):

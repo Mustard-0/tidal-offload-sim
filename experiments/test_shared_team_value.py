@@ -23,6 +23,7 @@ class SharedTeamValueTests(unittest.TestCase):
 
     def test_common_team_predictions_and_agent_order_invariance(self):
         policy=learner_for("TMPPO",self.train,self.cfg)
+        self.assertEqual(policy.method,"TMAPO")
         policy.set_training_clock(3000,2799,6000)
         x=policy.critic_input(self.context,self.glob)
         np.testing.assert_equal(x,np.broadcast_to(x[0],x.shape))
