@@ -180,6 +180,7 @@ class PPO:
             for stage in ("user","batch","route"):
                 rows = [r for r in actor_rows if r["stage"]==stage]
                 if (not rows or stage in stopped_stages or
+                        stage in c.get("frozen_actor_stages", ()) or
                         getattr(self,"steps",0) < c.get("actor_warmup_steps",0)):
                     continue
                 ob=self.tensor(np.stack([r["obs"] for r in rows])); mask=self.tensor(np.stack([r["mask"] for r in rows]),torch.bool)

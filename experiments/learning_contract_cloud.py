@@ -12,10 +12,12 @@ from learning_contract_campaign import load_plan, directory, ALL_VARIANTS
 def identity(repo,tag):
     if not re.fullmatch(r"[\w.-]+/[\w.-]+",repo):
         raise ValueError("Invalid repository identity")
-    match=re.fullmatch(r"(learning-contract|shared-team-value)-(\d{8}T\d{6}Z)",tag)
+    match=re.fullmatch(r"(learning-contract|shared-team-value|role-actor-credit)-(\d{8}T\d{6}Z)",tag)
     if not match:
         raise ValueError("Invalid explicit diagnostic tag")
-    return ("contract-campaign-" if match.group(1)=="learning-contract" else "shared-value-campaign-")+match.group(2)
+    prefixes={"learning-contract": "contract-campaign-", "shared-team-value": "shared-value-campaign-",
+              "role-actor-credit": "role-credit-campaign-"}
+    return prefixes[match.group(1)]+match.group(2)
 
 
 def main():

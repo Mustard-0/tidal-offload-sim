@@ -55,3 +55,33 @@ agent row order, unchanged actor outputs, unchanged physical settings, and
 rejection of incompatible value-input checkpoints. Both cells must pass raw
 accounting; learning gate and final-test exclusions remain identical. Two free
 standard CPU cloud jobs only, no local training or automatic long training.
+# Final Bounded Cycle: Actor-Component Credit Diagnostic
+
+The second cycle's shared-value arm briefly improved at update64 but then
+regressed. A 24-cohort paired replay on the already-registered validation traces
+reproduced its initialization/latest endpoints. Replacing the W/L/O actor with
+its preserved initialization restored cost from .630675 to .383574 and QoS from
+14.196% to zero; replacing only the router left cost .628789 and QoS14.078%.
+These are frozen-checkpoint interventions, not new checkpoint selection or a
+proof of an incorrect policy-gradient formula.
+
+The final cycle registers role_joint, role_route_only and role_wlo_only, each
+128x128 interactions, seed87021. All use shared_team_value, gamma1, lambda1,
+entropy0 and the same original task/physical/privacy/objective/validation/LR
+protocol. Only optimizer updates for the named frozen actor are skipped. The
+frozen actor still uses the common cost prior; it is not a forced LOCAL or
+forced RELEASE policy. All critic updates remain enabled. Checkpoints record
+the actor-freeze contract and reject incompatible loads. Unit tests require
+the frozen parameters to be bit-identical, active actor/critic to update,
+empty-freeze behavior to match legacy updates, and all physical configs to agree.
+
+The joint control must reproduce the previous shared-value arm's training
+prefix, excluding timing/RAM/new diagnostic columns. All outcomes, including
+failures and regressions, are retained. A frozen-actor ablation is NOT the final
+fully trained TMPPO algorithm and cannot establish a paper algorithm ranking.
+The same sustained-improvement criterion is retained: nonzero selected update,
+tail3 cost at most .99 of initialization, QoS growth at most .01. This is the
+third and final diagnostic cycle: total registered training interactions147456
+of the196608 cap. No fourth cycle, 2000-update expansion, heldout evaluation or
+formal grid is automatic, even if an ablation looks promising.
+

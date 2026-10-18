@@ -1,0 +1,77 @@
+name: Actor-component credit diagnostic
+run-name: ${{ github.ref_name }}
+on:
+  push:
+    tags:
+      - 'role-actor-credit-*'
+permissions:
+  contents: write
+concurrency:
+  group: role-actor-credit-${{ github.ref_name }}
+  cancel-in-progress: false
+env:
+  GH_TOKEN: ${{ github.token }}
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  PYTHONIOENCODING: utf-8
+jobs:
+  prepare:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Load registered three-case plan
+        run: python experiments/learning_contract_cloud.py prepare --out runs/contract --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"
+      - name: Install exact CPU dependencies
+        run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Actor-freeze contracts and full regression tests
+        run: python experiments/hybrid_campaign.py verify-code --execute --out runs/cloud_checks
+      - name: Retain verification
+        if: always()
+        run: |
+          if [ -f runs/contract/plan.json ]; then
+            python experiments/learning_contract_cloud.py publish --out runs/contract --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --case preparation --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+          fi
+  train:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        variant: [role_joint, role_route_only, role_wlo_only]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Load identical frozen plan
+        run: python experiments/learning_contract_cloud.py prepare --out runs/contract --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"
+      - name: Install exact CPU dependencies
+        run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Run one actor-component diagnostic
+        env:
+          CASE: ${{ matrix.variant }}
+        run: |
+          set -o pipefail
+          mkdir -p runs/contract/logs
+          python -u experiments/learning_contract_campaign.py worker --out runs/contract --case "$CASE" --execute 2>runs/contract/logs/"$CASE".err.log | tee runs/contract/logs/"$CASE".log
+      - name: Retain every outcome
+        if: always()
+        env:
+          CASE: ${{ matrix.variant }}
+        run: python experiments/learning_contract_cloud.py publish --out runs/contract --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --case "$CASE" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"

@@ -14,8 +14,9 @@ import hybrid_campaign as h
 ROOT = Path(__file__).resolve().parents[1]
 VARIANTS = ("control", "trace1", "noentropy", "trace1_noentropy")
 STUDIES = {"lambda_entropy": VARIANTS,
-           "shared_value": ("team_value_control", "team_value_shared")}
-ALL_VARIANTS = VARIANTS + STUDIES["shared_value"]
+           "shared_value": ("team_value_control", "team_value_shared"),
+           "role_credit": ("role_joint", "role_route_only", "role_wlo_only")}
+ALL_VARIANTS = VARIANTS + STUDIES["shared_value"] + STUDIES["role_credit"]
 
 
 def registered_settings(variant, seed=87021):
@@ -25,7 +26,9 @@ def registered_settings(variant, seed=87021):
                 episode_steps=6000, phase_count=5, validate_every=32,
                 validation_steps=1000, warmup_steps=300,
                 validation_seeds=[814001, 814019], validation_phases=[30., 130., 230.],
-                training_profile="contract_v4" if variant in VARIANTS else "shared_value_v5", diagnostic_variant=variant,
+                training_profile=("contract_v4" if variant in VARIANTS else
+                                  "shared_value_v5" if variant in STUDIES["shared_value"] else "role_credit_v6"),
+                diagnostic_variant=variant,
                 checkpoint_every=25, schedule_updates=2000, policy_diagnostics=True,
                 diagnostics_endpoints_only=True, baseline_diagnostics=False,
                 validation_objective="pooled_task_cost")
@@ -44,11 +47,13 @@ def initialize(root, verification, study="lambda_entropy"):
                 source_hashes=h.code_hashes(), verification=proof,
                 execution="github-only-standard-cpu-jobs",
                 cases=cases,
-                runtime=dict(max_workers=4, local_workers=0, start_ram_gib=1.5, two_workers_ram_gib=4.,
+                runtime=dict(max_workers=len(cases), local_workers=0, start_ram_gib=1.5, two_workers_ram_gib=4.,
                              pause_ram_gib=.5, worker_wall_s=1200, coordinator_wall_s=2700),
                 primary_interactions=sum(c["settings"]["updates"]*c["settings"]["rollout"] for c in cases), gamma_fixed=1., heldout_test_executed=False,
                 claim="Single-seed training diagnostic only, not a fair algorithm ranking",
-                extension="No automatic long training. At most control/candidate confirmation on seed87035 after review.")
+                extension=("Final diagnostic cycle; no automatic further training, seeds or formal experiments."
+                           if study == "role_credit" else
+                           "No automatic long training. At most control/candidate confirmation on seed87035 after review."))
     plan["plan_hash"] = h.digest(plan)
     root.mkdir(parents=True, exist_ok=False)
     h.write_json(root/"plan.json", plan)
@@ -150,6 +155,19 @@ def report(root, plan):
             cfg,train=pc.configuration(s)
             if manifest["environment"]!=cfg or manifest["training"]!=train:
                 raise ValueError("Executed physical or estimator configuration differs")
+            if s.get("training_profile") == "role_credit_v6":
+                import torch
+                saved = torch.load(path/"latest.pt", map_location="cpu", weights_only=False)
+                frozen = train["frozen_actor_stages"]
+                if saved["learner"]["frozen_actor_stages"] != frozen:
+                    raise ValueError("Checkpoint actor-stage contract differs from manifest")
+                with torch.random.fork_rng():
+                    torch.manual_seed(s["seed"])
+                    initial = pc.learner_for(s["method"], train, cfg).state(for_evaluation=True)
+                for key, parameter in initial["actors"].items():
+                    if key.split(".", 1)[0] in frozen and not torch.equal(
+                            parameter, saved["learner"]["actors"][key]):
+                        raise ValueError("Frozen actor parameter changed: " + key)
         audit_plan=dict(plan,stages={"probe":[dict(id=path.name,owner="local",settings=s)]},
                         runtime=dict(h.RUNTIME),gate=dict(tail_points=3,max_cost_ratio=1.25,
                                                          max_qos_increase=.05,max_tail_qos=.1))

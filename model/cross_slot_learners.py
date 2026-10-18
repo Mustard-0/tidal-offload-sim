@@ -40,6 +40,9 @@ class CrossSlotPPO(PPO):
         # The paper's TMPPO label retains TMAPO as its internal factory key.
         if self.cfg.get("shared_team_value", False) and self.method != "TMAPO":
             raise ValueError("Shared centralized value input is a TMPPO diagnostic only")
+        frozen = self.cfg.get("frozen_actor_stages", [])
+        if frozen not in ([], ["user"], ["route"]):
+            raise ValueError("Unregistered actor-stage ablation")
 
     def set_training_clock(self, remaining, arrivals_remaining, total):
         self.training_clock = training_clock(remaining, arrivals_remaining, total)
@@ -60,12 +63,15 @@ class CrossSlotPPO(PPO):
     def state(self, for_evaluation=False):
         result = super().state(for_evaluation)
         result.update(training_steps=self.steps, training_clock=self.training_clock.copy(),
-                      shared_team_value=self.cfg.get("shared_team_value", False))
+                      shared_team_value=self.cfg.get("shared_team_value", False),
+                      frozen_actor_stages=list(self.cfg.get("frozen_actor_stages", [])))
         return result
 
     def load(self, state):
         if state.get("shared_team_value", False) != self.cfg.get("shared_team_value", False):
             raise ValueError("Checkpoint centralized value-input contract differs")
+        if state.get("frozen_actor_stages", []) != self.cfg.get("frozen_actor_stages", []):
+            raise ValueError("Checkpoint actor-stage ablation contract differs")
         super().load(state)
         self.steps = state.get("training_steps", 0)
         self.training_clock = np.asarray(state.get("training_clock", [0., 0.]), np.float32).copy()
@@ -112,6 +118,8 @@ class CrossSlotPPO(PPO):
                     actions[name][row["action"]] += 1
         result = super().update(context, glob)
         result["actor_frozen"] = float(self.steps < self.cfg.get("actor_warmup_steps", 0))
+        for stage in ("user", "route"):
+            result[stage + "_optimizer_frozen"] = float(stage in self.cfg.get("frozen_actor_stages", []))
         for name in counts:
             result[name + "_trainable_decisions"] = counts[name]
             for action, count in enumerate(actions[name]):
