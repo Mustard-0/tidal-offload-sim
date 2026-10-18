@@ -33,3 +33,25 @@ unbounded search until TMPPO wins. Preserve all failed outcomes.
 
 New optional advantage diagnostics must be numerically inert, unit-tested, and
 record raw per-role GAE scales. No scientific model or old source is overwritten.
+
+## Second diagnostic: shared centralized team value
+
+The completed first ablation found no candidate eligible for independent-seed
+confirmation. Lambda1/entropy0 reduced regression but did not beat the common
+prior. This second study is a new mechanistic diagnostic, NOT formal expansion
+or a claim that the first gate passed. Decision and evidence are recorded in
+the first run's cycle2_decision.json, under the same finite iteration ledger.
+
+Exactly two TMPPO cells, team_value_control/team_value_shared, each128x128,
+seed87021, LR1, lambda1/entropy0 and all original physical settings. In the
+second cell only, the centralized critic receives the mean of agent contexts
+(broadcast identically to every agent) plus the same global observation and
+training clock. Actor inputs, architecture and reward stay unchanged. The
+representation remains partially observed: pooling is a regularization
+hypothesis, not proof that existing per-agent value baselines are incorrect.
+
+Unit contracts check identical team-value inputs/predictions, invariance to
+agent row order, unchanged actor outputs, unchanged physical settings, and
+rejection of incompatible value-input checkpoints. Both cells must pass raw
+accounting; learning gate and final-test exclusions remain identical. Two free
+standard CPU cloud jobs only, no local training or automatic long training.

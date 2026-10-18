@@ -248,13 +248,13 @@ def configuration(settings):
                  td3_replay_slots=4096, td3_batch=16, td3_update_every=8)
     train["actor_lr"], train["critic_lr"] = LEARNING_RATES[settings["lr"]-1]
     profile = settings.get("training_profile", "audit_v1")
-    if profile in ("team_v2", "credit_v3", "contract_v4"):
+    if profile in ("team_v2", "credit_v3", "contract_v4", "shared_value_v5"):
         # Conserving mean local rewards does not preserve the gradient of the
         # cooperative objective when a decision changes other users' queues.
         train.update(local_credit_fraction=0., linear_lr_decay=True,
                      lr_final_fraction=.1, td3_huber=True,
                      td3_discrete_objective="categorical_expectation")
-        if profile in ("credit_v3", "contract_v4"):
+        if profile in ("credit_v3", "contract_v4", "shared_value_v5"):
             train.update(critic_clock_features=2, actor_warmup_steps=2048)
         if profile == "contract_v4":
             variants = {"control": (.98, .01), "trace1": (1., .01),
@@ -264,6 +264,12 @@ def configuration(settings):
                 raise ValueError("Unknown predeclared diagnostic variant")
             train["gae_lambda"], train["entropy"] = variants[variant]
             train["record_advantage_diagnostics"] = True
+        if profile == "shared_value_v5":
+            variant = settings.get("diagnostic_variant")
+            if settings["method"] != "TMPPO" or variant not in ("team_value_control", "team_value_shared"):
+                raise ValueError("Unregistered shared-team-value diagnostic")
+            train.update(gae_lambda=1., entropy=0., record_advantage_diagnostics=True,
+                         shared_team_value=variant == "team_value_shared")
     elif profile != "audit_v1":
         raise ValueError("Unknown training profile")
     return cfg, train

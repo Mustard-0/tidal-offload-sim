@@ -6,16 +6,16 @@ import re
 import zipfile
 
 import hybrid_campaign as h
-from learning_contract_campaign import load_plan, directory, VARIANTS
+from learning_contract_campaign import load_plan, directory, ALL_VARIANTS
 
 
 def identity(repo,tag):
     if not re.fullmatch(r"[\w.-]+/[\w.-]+",repo):
         raise ValueError("Invalid repository identity")
-    match=re.fullmatch(r"learning-contract-(\d{8}T\d{6}Z)",tag)
+    match=re.fullmatch(r"(learning-contract|shared-team-value)-(\d{8}T\d{6}Z)",tag)
     if not match:
         raise ValueError("Invalid explicit diagnostic tag")
-    return "contract-campaign-"+match.group(1)
+    return ("contract-campaign-" if match.group(1)=="learning-contract" else "shared-value-campaign-")+match.group(2)
 
 
 def main():
@@ -24,7 +24,7 @@ def main():
     parser.add_argument("--out",type=Path,required=True)
     parser.add_argument("--repo",required=True)
     parser.add_argument("--tag",required=True)
-    parser.add_argument("--case",choices=VARIANTS+("preparation",))
+    parser.add_argument("--case",choices=ALL_VARIANTS+("preparation",))
     parser.add_argument("--run-id")
     parser.add_argument("--attempt",default="1")
     args=parser.parse_args();root=args.out.resolve()
@@ -34,7 +34,7 @@ def main():
         h.command(["gh","release","download",release,"--repo",args.repo,
                    "--pattern","plan.json","--dir",root])
         plan=load_plan(root)
-        if plan.get("execution")!="github-only-four-standard-cpu-jobs":
+        if plan.get("execution")!="github-only-standard-cpu-jobs":
             raise ValueError("Unregistered execution owner")
         return
     plan=load_plan(root)

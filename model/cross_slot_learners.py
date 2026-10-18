@@ -37,11 +37,15 @@ class CrossSlotPPO(PPO):
         super().__init__(*args, **kwargs)
         self.steps = 0
         self.training_clock = np.zeros(2, np.float32)
+        if self.cfg.get("shared_team_value", False) and self.method != "TMPPO":
+            raise ValueError("Shared centralized value input is a TMPPO diagnostic only")
 
     def set_training_clock(self, remaining, arrivals_remaining, total):
         self.training_clock = training_clock(remaining, arrivals_remaining, total)
 
     def critic_input(self, context, glob):
+        if self.cfg.get("shared_team_value", False):
+            context = np.broadcast_to(np.mean(context, axis=0), context.shape)
         inputs = super().critic_input(context, glob)
         if self.cfg.get("critic_clock_features", 0):
             inputs = np.concatenate([inputs, np.broadcast_to(self.training_clock,
@@ -54,10 +58,13 @@ class CrossSlotPPO(PPO):
 
     def state(self, for_evaluation=False):
         result = super().state(for_evaluation)
-        result.update(training_steps=self.steps, training_clock=self.training_clock.copy())
+        result.update(training_steps=self.steps, training_clock=self.training_clock.copy(),
+                      shared_team_value=self.cfg.get("shared_team_value", False))
         return result
 
     def load(self, state):
+        if state.get("shared_team_value", False) != self.cfg.get("shared_team_value", False):
+            raise ValueError("Checkpoint centralized value-input contract differs")
         super().load(state)
         self.steps = state.get("training_steps", 0)
         self.training_clock = np.asarray(state.get("training_clock", [0., 0.]), np.float32).copy()

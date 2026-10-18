@@ -13,34 +13,40 @@ import hybrid_campaign as h
 
 ROOT = Path(__file__).resolve().parents[1]
 VARIANTS = ("control", "trace1", "noentropy", "trace1_noentropy")
+STUDIES = {"lambda_entropy": VARIANTS,
+           "shared_value": ("team_value_control", "team_value_shared")}
+ALL_VARIANTS = VARIANTS + STUDIES["shared_value"]
 
 
 def registered_settings(variant, seed=87021):
-    if variant not in VARIANTS or seed not in (87021, 87035):
+    if variant not in ALL_VARIANTS or seed not in (87021, 87035):
         raise ValueError("Unregistered ablation or confirmation seed")
     return dict(method="TMPPO", lr=1, seed=seed, updates=128, rollout=128,
                 episode_steps=6000, phase_count=5, validate_every=32,
                 validation_steps=1000, warmup_steps=300,
                 validation_seeds=[814001, 814019], validation_phases=[30., 130., 230.],
-                training_profile="contract_v4", diagnostic_variant=variant,
+                training_profile="contract_v4" if variant in VARIANTS else "shared_value_v5", diagnostic_variant=variant,
                 checkpoint_every=25, schedule_updates=2000, policy_diagnostics=True,
                 diagnostics_endpoints_only=True, baseline_diagnostics=False,
                 validation_objective="pooled_task_cost")
 
 
-def initialize(root, verification):
+def initialize(root, verification, study="lambda_entropy"):
     proof = h.read_json(verification)
     if not proof.get("passed") or proof["source_hashes"] != h.code_hashes():
         raise ValueError("Verify this exact source first")
     if h.command(["git", "status", "--porcelain"]):
         raise ValueError("Commit the reviewed source first")
-    plan = dict(schema="learning-contract-diagnostic-v1", commit=h.command(["git", "rev-parse", "HEAD"]),
+    if study not in STUDIES:
+        raise ValueError("Unknown bounded diagnostic study")
+    cases=[dict(variant=v, settings=registered_settings(v)) for v in STUDIES[study]]
+    plan = dict(schema="learning-contract-diagnostic-v1", study=study, commit=h.command(["git", "rev-parse", "HEAD"]),
                 source_hashes=h.code_hashes(), verification=proof,
-                execution="github-only-four-standard-cpu-jobs",
-                cases=[dict(variant=v, settings=registered_settings(v)) for v in VARIANTS],
+                execution="github-only-standard-cpu-jobs",
+                cases=cases,
                 runtime=dict(max_workers=4, local_workers=0, start_ram_gib=1.5, two_workers_ram_gib=4.,
                              pause_ram_gib=.5, worker_wall_s=1200, coordinator_wall_s=2700),
-                primary_interactions=65536, gamma_fixed=1., heldout_test_executed=False,
+                primary_interactions=sum(c["settings"]["updates"]*c["settings"]["rollout"] for c in cases), gamma_fixed=1., heldout_test_executed=False,
                 claim="Single-seed training diagnostic only, not a fair algorithm ranking",
                 extension="No automatic long training. At most control/candidate confirmation on seed87035 after review.")
     plan["plan_hash"] = h.digest(plan)
@@ -52,7 +58,7 @@ def load_plan(root):
     plan = h.read_json(root/"plan.json")
     if h.digest({k:v for k,v in plan.items() if k!="plan_hash"}) != plan["plan_hash"]:
         raise ValueError("Plan hash changed")
-    if plan["cases"] != [dict(variant=v, settings=registered_settings(v)) for v in VARIANTS]:
+    if plan.get("study") not in STUDIES or plan["cases"] != [dict(variant=v, settings=registered_settings(v)) for v in STUDIES[plan["study"]]]:
         raise ValueError("Budget or predeclared cases changed")
     if h.code_hashes() != plan["source_hashes"] or h.command(["git","rev-parse","HEAD"]) != plan["commit"]:
         raise ValueError("Frozen code changed")
@@ -65,7 +71,7 @@ def directory(root, case):
 
 
 def run(root, plan):
-    if plan.get("execution") == "github-only-four-standard-cpu-jobs":
+    if plan.get("execution") == "github-only-standard-cpu-jobs":
         raise ValueError("Do not duplicate the registered cloud cases locally")
     pending, active = list(plan["cases"]), []
     logs = root/"logs"
@@ -176,14 +182,14 @@ def report(root, plan):
     fig.suptitle("Learning-contract ablation | same physical protocol | one seed | raw validation points")
     fig.tight_layout();fig.savefig(root/"ablation.png",dpi=170);plt.close(fig)
     pc.csv_write(root/"summary.csv",summaries);pc.csv_write(root/"validation_points.csv",points)
-    h.write_json(root/"audit.json",dict(all_integrity_passed=len(summaries)==4,audits=audits,
+    h.write_json(root/"audit.json",dict(all_integrity_passed=len(summaries)==len(plan["cases"]),audits=audits,
                                       test_executed=False,publication_grade=False))
     h.write_json(root/"selection.json",dict(
         eligible=[s["variant"] for s in summaries if s["confirmation_eligible"]],
         final_learning_rate_allowed=False,auto_long_training=False,
         note="Eligibility permits another bounded validation experiment, not a success claim"))
     print(json.dumps(summaries,indent=2),flush=True)
-    return len(summaries)==4
+    return len(summaries)==len(plan["cases"])
 
 
 def main():
@@ -191,11 +197,12 @@ def main():
     parser.add_argument("command",choices=("init","run","worker","report"))
     parser.add_argument("--out",type=Path,required=True)
     parser.add_argument("--verification",type=Path)
-    parser.add_argument("--case",choices=VARIANTS)
+    parser.add_argument("--case",choices=ALL_VARIANTS)
+    parser.add_argument("--study",choices=tuple(STUDIES),default="lambda_entropy")
     parser.add_argument("--execute",action="store_true")
     a=parser.parse_args();root=a.out.resolve()
     if a.command=="init":
-        initialize(root,a.verification);return
+        initialize(root,a.verification,a.study);return
     plan=load_plan(root)
     if a.command=="report":
         raise SystemExit(0 if report(root,plan) else 1)
