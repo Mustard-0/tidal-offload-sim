@@ -1,0 +1,114 @@
+name: Paper hybrid convergence
+run-name: ${{ github.ref_name }}
+
+# Only an explicit stage tag starts work. A normal branch push runs no training.
+on:
+  push:
+    tags:
+      - 'paper-screen-*'
+      - 'paper-formal-*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: paper-hybrid-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  prepare:
+    # The user requested free-only resources. Private minutes cannot be
+    # guaranteed free by this workflow; repository visibility is never changed.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    outputs:
+      stage: ${{ steps.plan.outputs.stage }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      max_parallel: ${{ steps.plan.outputs.max_parallel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Download frozen plan and recompute screen gate for formal stage
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAMPAIGN_REPO: ${{ github.repository }}
+          STAGE_TAG: ${{ github.ref_name }}
+        run: >-
+          python experiments/hybrid_campaign.py cloud-prepare
+          --out runs/cloud --repo "$CAMPAIGN_REPO" --tag "$STAGE_TAG"
+      - name: Install exact CPU dependencies
+        run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Validate source before starting matrix
+        run: >-
+          python experiments/hybrid_campaign.py verify-code
+          --out runs/cloud_checks --execute
+      - name: Retain preparation diagnostics
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAMPAIGN_REPO: ${{ github.repository }}
+          STAGE: ${{ steps.plan.outputs.stage }}
+        run: |
+          if [ -f runs/cloud/campaign.json ] && [ -n "$STAGE" ]; then
+            python experiments/hybrid_campaign.py publish-cloud --out runs/cloud --repo "$CAMPAIGN_REPO" --stage "$STAGE" --cell preparation --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --execute
+          fi
+
+  cell:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 285
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Read same frozen plan and verify formal prerequisite
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAMPAIGN_REPO: ${{ github.repository }}
+          STAGE_TAG: ${{ github.ref_name }}
+        run: >-
+          python experiments/hybrid_campaign.py cloud-prepare
+          --out runs/cloud --repo "$CAMPAIGN_REPO" --tag "$STAGE_TAG"
+      - name: Install exact CPU dependencies
+        run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Run one disjoint cloud cell
+        env:
+          CELL: ${{ matrix.cell }}
+          STAGE: ${{ needs.prepare.outputs.stage }}
+        run: >-
+          python -u experiments/hybrid_campaign.py worker --out runs/cloud
+          --stage "$STAGE" --cell "$CELL" --execute
+      - name: Preserve raw data and checkpoints including failed or paused work
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAMPAIGN_REPO: ${{ github.repository }}
+          CELL: ${{ matrix.cell }}
+          STAGE: ${{ needs.prepare.outputs.stage }}
+        run: >-
+          python experiments/hybrid_campaign.py publish-cloud --out runs/cloud
+          --repo "$CAMPAIGN_REPO" --stage "$STAGE" --cell "$CELL"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --execute
