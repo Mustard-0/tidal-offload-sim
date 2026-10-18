@@ -33,13 +33,15 @@ from paper_four_studies import (full_config, LEARNING_RATES, TRAIN_SEEDS,
 from cross_slot_environment import CrossSlotWLOEnvironment
 from cross_slot_learners import CrossSlotPPO, CrossSlotTD3
 from cross_slot_wlo_train import CrossSlotRule
+from atomic_io import replace_file
 
 METHODS = ("TMPPO", "IPPO", "MARATD3-Adapted")
 PHASES = (30., 130., 230.)
 SOURCE_FILES = tuple(sorted(set(
     list((ROOT / "model").glob("*.py")) +
     list((ROOT / "experiments").glob("*.py")) +
-    [ROOT / "config.json", ROOT / "experiments/PAPER_FOUR_STUDIES_PROTOCOL.md"])))
+    [ROOT / "config.json", ROOT / "experiments/PAPER_FOUR_STUDIES_PROTOCOL.md"] +
+    list((ROOT/"experiments").glob("LONG_PROBE_2000_PROTOCOL.md")))))
 
 
 def free_ram_gib():
@@ -64,7 +66,7 @@ def json_write(path, value):
     path = Path(path)
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
-    temp.replace(path)
+    replace_file(temp, path)
 
 
 def csv_write(path, rows):
@@ -76,7 +78,7 @@ def csv_write(path, rows):
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
-    temp.replace(path)
+    replace_file(temp, path)
 
 
 def source_hashes():
@@ -211,7 +213,8 @@ def validation_snapshot(method, learner, train, cfg, settings, update, out, base
         # action RNG for each trace; restore training RNG in the outer finally.
         if settings.get("policy_diagnostics", False) and (
                 update in (0, settings["updates"]) or
-                settings.get("training_profile") == "credit_v3"):
+                (settings.get("training_profile") == "credit_v3" and
+                 not settings.get("diagnostics_endpoints_only", False))):
             for seed in settings["validation_seeds"]:
                 for phase in settings["validation_phases"]:
                     action_seed = int(np.random.SeedSequence(
@@ -266,7 +269,7 @@ def new_environment(cfg, seed, episode, phase_count):
 def save_checkpoint(path, payload):
     temp = path.with_suffix(".tmp")
     torch.save(payload, temp)
-    temp.replace(path)
+    replace_file(temp, path)
 
 
 def train_cell(out, settings, resume=False, wall_seconds=600., stop_after=None):
@@ -586,7 +589,8 @@ def report(root):
         rows = [r for r in summaries if r["method"]=="TMPPO" and r["lr"]==lr]
         candidates[str(lr)] = dict(training_seeds=sorted(r["train_seed"] for r in rows),
                                   mean_selected_validation_cost=float(np.mean([r["mean_task_cost"] for r in rows])) if rows else None)
-    qualified = all(len(candidates[str(lr)]["training_seeds"])==3 and
+    qualified = all(candidates[str(lr)] is not None and
+                    len(candidates[str(lr)]["training_seeds"])==3 and
                     set(candidates[str(lr)]["training_seeds"])==set(TRAIN_SEEDS) for lr in (1,2))
     all_methods_three_seeds = all(
         {r["train_seed"] for r in summaries if r["method"]==method and r["lr"]==lr}==set(TRAIN_SEEDS)
@@ -607,7 +611,7 @@ def report(root):
 
 
 def settings_from_args(a):
-    return dict(method=a.method, lr=a.lr, seed=a.seed, updates=a.updates, rollout=a.rollout,
+    result = dict(method=a.method, lr=a.lr, seed=a.seed, updates=a.updates, rollout=a.rollout,
                 episode_steps=a.episode_steps, phase_count=a.phase_count or (3 if a.updates<=128 else 5),
                 validate_every=a.validate_every, validation_steps=a.validation_steps,
                 warmup_steps=a.warmup_steps, validation_seeds=list(VALIDATION_SEEDS),
@@ -615,6 +619,9 @@ def settings_from_args(a):
                 checkpoint_every=a.checkpoint_every, schedule_updates=a.schedule_updates or a.updates,
                 policy_diagnostics=a.policy_diagnostics, baseline_diagnostics=a.baseline_diagnostics,
                 validation_objective=a.validation_objective)
+    if a.diagnostics_endpoints_only:
+        result["diagnostics_endpoints_only"] = True
+    return result
 
 
 def main():
@@ -638,6 +645,7 @@ def main():
     parser.add_argument("--checkpoint-every", type=int, default=1)
     parser.add_argument("--schedule-updates", type=int)
     parser.add_argument("--policy-diagnostics", action="store_true")
+    parser.add_argument("--diagnostics-endpoints-only", action="store_true")
     parser.add_argument("--baseline-diagnostics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--validation-objective", choices=("equal_scenario_cost", "pooled_task_cost"),
                         default="equal_scenario_cost")
@@ -684,6 +692,8 @@ def main():
                             command += ["--"+flag.replace("_","-"), str(value)]
                     if a.policy_diagnostics:
                         command.append("--policy-diagnostics")
+                    if a.diagnostics_endpoints_only:
+                        command.append("--diagnostics-endpoints-only")
                     if not a.baseline_diagnostics:
                         command.append("--no-baseline-diagnostics")
                     with (a.out/(cell.name+".log")).open("w", encoding="utf-8") as stdout, \

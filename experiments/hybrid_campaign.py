@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from atomic_io import replace_file
 
 ROOT = Path(__file__).resolve().parents[1]
 METHODS = ("TMPPO", "IPPO", "MARATD3-Adapted")
@@ -47,7 +48,7 @@ def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(value, indent=2, allow_nan=False), encoding="utf-8")
-    temp.replace(path)
+    replace_file(temp, path)
 
 
 def digest(value):
@@ -70,6 +71,9 @@ def code_hashes():
     paths += [ROOT/p for p in ("config.json", "requirements.txt",
                               "experiments/PAPER_FOUR_STUDIES_PROTOCOL.md",
                               ".github/workflows/paper_hybrid.yml")]
+    paths += list((ROOT/".github/workflows").glob("*long_probe*.yml"))
+    if (ROOT/"experiments/LONG_PROBE_2000_PROTOCOL.md").exists():
+        paths.append(ROOT/"experiments/LONG_PROBE_2000_PROTOCOL.md")
     return {p.relative_to(ROOT).as_posix(): file_hash(p, True) for p in sorted(paths)}
 
 
