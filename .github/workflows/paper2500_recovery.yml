@@ -1,0 +1,118 @@
+name: Frozen paper2500 free CPU recovery
+run-name: ${{ github.ref_name }}
+on:
+  push:
+    tags: ['recovery2500-wave-*']
+permissions:
+  contents: write
+concurrency:
+  group: paper2500-recovery-${{ github.ref_name }}
+  cancel-in-progress: false
+env:
+  GH_TOKEN: ${{ github.token }}
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  PYTHONIOENCODING: utf-8
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  prepare:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      parallel: ${{ steps.plan.outputs.parallel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 4a17b77d98970fe090531420479020c607f4dfb9
+          path: frozen
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Validate recovery policy and immutable scientific plan
+        id: plan
+        working-directory: frozen
+        shell: bash
+        run: |
+          matrix=$(python ../recovery2500/cloud.py prepare --out runs/segment --tag "$GITHUB_REF_NAME")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          python -c 'import json,os; w=json.load(open("runs/segment/requests/wave.json")); n=1 if w["stage_tasks"][0]["kind"]=="evaluation" else 16; print("parallel="+str(n),file=open(os.environ["GITHUB_OUTPUT"],"a"))'
+      - name: Orchestration contract tests (no training)
+        run: python -m unittest discover -s recovery2500 -p 'test_*.py' -v
+        env:
+          FROZEN_SOURCE: ${{ github.workspace }}/frozen
+  train:
+    needs: prepare
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 260
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.prepare.outputs.parallel) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 4a17b77d98970fe090531420479020c607f4dfb9
+          path: frozen
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Download exact checkpoint lineage
+        working-directory: frozen
+        run: python ../recovery2500/cloud.py prepare --out runs/segment --tag "$GITHUB_REF_NAME"
+      - name: Pinned CPU dependencies, no cache
+        working-directory: frozen
+        run: |
+          python -m pip install --no-cache-dir torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --no-cache-dir -r requirements.txt
+      - name: Resume bounded segment and publish raw checkpoint ZIP
+        working-directory: frozen
+        env:
+          TASK: ${{ matrix.task }}
+        run: python -u ../recovery2500/cloud.py worker --out runs/segment --task "$TASK" --execute
+  finalize:
+    needs: [prepare, train]
+    if: ${{ always() && needs.prepare.result == 'success' && !github.event.repository.private }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 4a17b77d98970fe090531420479020c607f4dfb9
+          path: frozen
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Prepare exact stage evidence
+        working-directory: frozen
+        run: python ../recovery2500/cloud.py prepare --out runs/segment --tag "$GITHUB_REF_NAME"
+      - name: Check whether the full stage is ready
+        id: ready
+        working-directory: frozen
+        shell: bash
+        run: echo "ready=$(python ../recovery2500/cloud.py ready --out runs/segment --execute)" >> "$GITHUB_OUTPUT"
+      - name: Pinned audit dependencies, no cache
+        if: ${{ steps.ready.outputs.ready == 'true' }}
+        working-directory: frozen
+        run: |
+          python -m pip install --no-cache-dir torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --no-cache-dir -r requirements.txt
+      - name: Audit a completed stage or retain a partial wave
+        if: ${{ steps.ready.outputs.ready == 'true' }}
+        working-directory: frozen
+        run: python -u ../recovery2500/cloud.py finalize --out runs/segment --execute
