@@ -44,13 +44,47 @@ class EpisodeTests(unittest.TestCase):
                          {'TMAPO':15,'IPPO':4,'PPO':4})
         for c in p['cells']:
             _, t = configuration(c['algorithm'],c['lr_index'],c['seed'])
-            self.assertEqual(t['episodes'],2000)
+            self.assertEqual(t['episodes'],3000)
+            self.assertEqual(t['lr_decay_episode_horizon'],2000)
             self.assertEqual(t['arrival_steps'],100)
             self.assertEqual(t['seed'],c['seed'])
             self.assertEqual(t['actor_lr'],c['actor_lr'])
             self.assertEqual(t['critic_lr'],c['critic_lr'])
             self.assertEqual(p['population'],[34,33,33])
             self.assertNotIn('validation_interval',t)
+
+    def test_extension_retains_state_and_matches_continuous_schedule(self):
+        scratch=ROOT/'.test_tmp';scratch.mkdir(exist_ok=True)
+        parent_component=dict(episodes=2,checkpoint_episodes=1)
+        target_component=dict(episodes=3,checkpoint_episodes=1,lr_decay_episode_horizon=2)
+        with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+            root=Path(tmp)
+            for method in ('TMAPO','IPPO','PPO'):
+                parent=root/(method+'_parent');reference=root/(method+'_reference');out=root/(method+'_extended')
+                self.assertTrue(train(parent,method,component=parent_component))
+                old_bytes=(parent/'latest.pt').read_bytes();old_csv=(parent/'episode_returns.csv').read_bytes()
+                old=torch.load(parent/'latest.pt',weights_only=False)
+                self.assertTrue(train(reference,method,component=target_component))
+                self.assertFalse(train(out,method,component=target_component,extend_from=parent,stop_episode=2))
+                adopted=torch.load(out/'latest.pt',weights_only=False)
+                self.assertEqual(adopted['completed_episodes'],2)
+                for key in ('learner','environment','rng','rows','env_steps','training_wall_s'):
+                    self.assert_state_equal(old[key],adopted[key],method+'.adoption.'+key)
+                self.assertFalse((out/'complete.json').exists())
+                self.assertTrue(train(out,method,resume=True,component=target_component))
+                actual=torch.load(out/'latest.pt',weights_only=False)
+                expected=torch.load(reference/'latest.pt',weights_only=False)
+                for key in ('learner','environment','rng','env_steps'):
+                    self.assert_state_equal(expected[key],actual[key],method+'.continued.'+key)
+                self.assertEqual([{k:v for k,v in r.items() if k!='training_wall_s'} for r in actual['rows']],
+                                 [{k:v for k,v in r.items() if k!='training_wall_s'} for r in expected['rows']])
+                self.assertTrue((out/'episode_returns.csv').read_bytes().startswith(old_csv))
+                self.assertEqual((parent/'latest.pt').read_bytes(),old_bytes)
+                _,cfg=configuration(method)
+                for opt,key in (('aopt','actor_lr'),('copt','critic_lr')):
+                    self.assertAlmostEqual(actual['learner'][opt]['param_groups'][0]['lr'],cfg[key]*.1)
+                with self.assertRaises(ValueError):
+                    train(root/(method+'_invalid_formal'),method,extend_from=parent)
 
     def test_baseline_formal_prefix_is_unchanged(self):
         expected={'TMAPO':(-24.231917200949628,-30.218177066922983),

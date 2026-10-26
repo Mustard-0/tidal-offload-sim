@@ -21,10 +21,14 @@ def new_environment(cfg, seed, episode, arrival_steps):
     return env
 
 
-def train(out,method,resume=False,max_seconds=10800,component=None,stop_episode=None,lr=1,seed=87021):
+def train(out,method,resume=False,max_seconds=10800,component=None,stop_episode=None,lr=1,seed=87021,extend_from=None):
     cfg,training=configuration(method,lr,seed)
     if component:
         training.update(component)
+        if 'lr_decay_episode_horizon' not in component:
+            training['lr_decay_episode_horizon']=min(2000,training['episodes'])
+    if resume and extend_from:
+        raise ValueError('Choose explicit extension OR resume, not both')
     training['updates']=training['episodes']
     training['episode_max_steps']=training['arrival_steps']+math.ceil(cfg['lifetime_s']/cfg['dt_s'])+3
     if available_ram_gib()<1.:
@@ -37,25 +41,30 @@ def train(out,method,resume=False,max_seconds=10800,component=None,stop_episode=
     fd=os.open(out/'.worker.lock',os.O_CREAT|os.O_EXCL|os.O_WRONLY)
     os.write(fd,str(os.getpid()).encode())
     try:
-        return _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr)
+        return _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr,extend_from)
     finally:
         os.close(fd)
         (out/'.worker.lock').unlink()
 
 
-def _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr=1):
+def _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr=1,extend_from=None):
     seed_all(training['seed'])
     actual=runtime_info('cpu')
     runtime={k:actual[k] for k in ('python','numpy','scipy','torch','device','torch_threads')}
-    identity=dict(schema='short100-natural-drain-v1',method=method,lr=lr,environment=cfg,
+    identity=dict(schema='short100-natural-drain-extension-v1',method=method,lr=lr,environment=cfg,
         training=training,runtime=runtime,source_hashes=source_hashes(),
         component_only=bool(component),transfer_integrated=True)
     identity_hash=digest(identity)
+    if extend_from:
+        from .extension import prepare_extension
+        prepare_extension(extend_from,out,identity,actual,bool(component))
+        resume=True
     if resume:
         manifest=json.loads((out/'manifest.json').read_text())
         if manifest['identity_hash']!=identity_hash or (out/'complete.json').exists():
             raise ValueError('Changed source/config/runtime or already complete')
-        manifest['execution_runtimes'].append(actual)
+        if not extend_from:
+            manifest['execution_runtimes'].append(actual)
         json_write(out/'manifest.json',manifest)
     else:
         json_write(out/'manifest.json',dict(identity,identity_hash=identity_hash,
@@ -83,6 +92,9 @@ def _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr=
             (archive/'episode_returns.csv').write_bytes((out/'episode_returns.csv').read_bytes())
         if rows:
             csv_write(out/'episode_returns.csv',rows)
+        if stop_episode and completed>=stop_episode:
+            json_write(out/'paused.json',dict(update=completed,reason='component boundary'))
+            return False
     started=last_checkpoint=time.monotonic()
     checkpoint_episode=completed
 
@@ -102,7 +114,8 @@ def _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr=
             tick=time.monotonic()
             environment=new_environment(cfg,training['seed'],episode,training['arrival_steps'])
             learner.reset_history()
-            learner.set_progress(episode+1,training['episodes'])
+            horizon=training['lr_decay_episode_horizon']
+            learner.set_progress(min(episode+1,horizon),horizon)
             total_return=0.
             for slot in range(training['episode_max_steps']):
                 reward,records,_,_=environment.step(learner,arrivals=slot<training['arrival_steps'])
@@ -167,9 +180,10 @@ def main():
     p.add_argument('--resume',action='store_true')
     p.add_argument('--lr',type=int,default=1)
     p.add_argument('--seed',type=int,default=87021)
+    p.add_argument('--extend-from',type=Path)
     p.add_argument('--max-seconds',type=float,default=10800)
     a=p.parse_args()
-    train(a.out,a.method,a.resume,a.max_seconds,lr=a.lr,seed=a.seed)
+    train(a.out,a.method,a.resume,a.max_seconds,lr=a.lr,seed=a.seed,extend_from=a.extend_from)
 
 
 if __name__=='__main__':

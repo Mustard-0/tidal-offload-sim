@@ -1,12 +1,14 @@
 {
   "source_hashes": {
     "experiments/episode_return/__init__.py": "c863252b6dd329b6bb16ef1d13b2498c3360d75b184c9f579c0d9c4a1a176a3e",
-    "experiments/episode_return/cloud_worker.py": "60ae1bae99a003c37d6d1b763f6103020fe7ed2719f90e2f56311d830bebe126",
-    "experiments/episode_return/freeze.py": "ced0de3184cd9c1d725d82662a7f92c4000b29f0bf36a3f98de2e9e0b27a2c1b",
-    "experiments/episode_return/protocol.py": "0ca8f19d7f70ecf4607e65d958edab0c61359f58b7f8bb32821535c211acb628",
-    "experiments/episode_return/report.py": "2877b67c145b836bf411e4bdca450c32fd4132b15ada3476a2f1480caf015b63",
-    "experiments/episode_return/runner.py": "35ec008dad9de5ef83ffc4e8692c95d1633a515f7e25bc753f5f2acb3e32b9bc",
-    "experiments/episode_return/test_runner.py": "10f3a3f308a5268bff8ad5f87e578455fb8de4d7f0777d19d6cb2a544085dde5",
+    "experiments/episode_return/cloud_worker.py": "7146795305a24a058c229af5f6675829459ee97495a2832d03d2dbd7cdbf1d33",
+    "experiments/episode_return/extension.py": "16517fe88b06674d6b9d990587187f7556844c5626e8c1c7be48d60f168126c6",
+    "experiments/episode_return/freeze.py": "074feeea74dd887008852e5bacf5e7508762686199fd2544e803c20c9c831173",
+    "experiments/episode_return/parent_contracts.json": "f59039069b96cb63b6180980a382f40420e7d7ff0367f5eb288b97d313d641b2",
+    "experiments/episode_return/protocol.py": "2d377a7842f0ac88c1a1775e2b8415964bdcef81a6962dee6da279be25985eda",
+    "experiments/episode_return/report.py": "69157f1779070df71a630153ce474ee586f471c8625ec7c89944f189db5ae1e5",
+    "experiments/episode_return/runner.py": "5ab01b2919bba8b3bfd66711d33540f483ab35e4a10c10d95933f1d56f87551a",
+    "experiments/episode_return/test_runner.py": "62de3f45cdf55a0fda0f3846ad3b1cd6acadff91ae106c6522c7100681b48c4d",
     "experiments/lr_screen/__init__.py": "06df18419df06d84339b448ee7bceb85a1f5508722044674a6381bb3c5184a24",
     "experiments/lr_screen/accept_preflight.py": "728d7be805888ea9f7e1d9592ee5d7bc945ed470e4d48ab9f62f19300fe51a30",
     "experiments/lr_screen/algorithms.py": "831ba75af83fbcba2b1b992f578fcc21aac6d4921577d9bdc305e9cba6d9f00e",
@@ -63,12 +65,12 @@
     "model/test_review_fixes.py": "fed837b25e09d4cd100bda9c24e451ec6ad6b5a7ab6af5feb0894d2e7a61f568",
     "model/workload.py": "8a526b57949d380bc27352b68295cb3fa021f5783eb1dc00fcf85b04d2b293f4"
   },
-  "plan_hash": "5894eea814efefd5f21d0f82ac1a6d8c10b14db3d1de66f8dcebf17ee3650c02",
+  "plan_hash": "d5b498fc06294ac06355b1dc8f4517c23b185ecff900ce6cd4a6e7a6542a1fa9",
   "cloud_runtime": {
     "python_version": "3.9.25",
     "torch": "2.5.1+cpu",
     "numpy": "2.0.2",
     "scipy": "1.13.1"
   },
-  "scope": "N100 [34,33,33], arrival100+drain, 2000 episodes, 23 predeclared LR/seed cells"
+  "scope": "N100 [34,33,33], 23 fixed cells, explicit completed2000 to3000 continuation, terminal LR retained"
 }

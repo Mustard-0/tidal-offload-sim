@@ -21,7 +21,7 @@ def request_from_tag():
     if (request['plan_hash'] != digest(plan()) or len(ids) != len(set(ids))
             or not 1<=len(ids)<=16 or not set(ids) <= expected):
         raise ValueError('Unknown/duplicated cell or changed plan')
-    if any(not 1 <= e['segment'] <= 96 for e in request['entries']):
+    if any(not 2 <= e['segment'] <= 96 or not e.get('input') for e in request['entries']):
         raise ValueError('Segment cap')
     return request
 
@@ -45,6 +45,8 @@ def run(entry, request):
     cell = next(c for c in plan()['cells'] if c['id'] == entry['cell'])
     out = ROOT/'runs/episode_cloud'/cell['id']
     parent = entry.get('input')
+    initial_extension=entry['segment']==2
+    input_folder=ROOT/'runs/completed2000_input'/cell['id'] if initial_extension else out
     if parent:
         release = api.request('GET','/repos/'+REPOSITORY+'/releases/'+str(request['release_id']))
         asset = next(a for a in release['assets'] if a['name'] == parent['name'])
@@ -52,36 +54,49 @@ def run(entry, request):
         if sha(packet) != parent['sha256']:
             raise ValueError('Parent digest mismatch')
         raw, _ = unseal(packet,key,dict(campaign=request['campaign'],cell=cell['id'],direction='input'))
-        unpack(raw,out)
-        if (out/'.worker.lock').exists() or (out/'failure.json').exists():
+        unpack(raw,input_folder)
+        if (input_folder/'.worker.lock').exists() or (input_folder/'failure.json').exists():
             raise ValueError('Unclean worker or unknown failure; no automatic resume')
     # Execute only the minimal new-path test on first segments. The mechanism,
     # shared environment and PPO core retain the already-reviewed source hashes.
-    if not parent:
+    if initial_extension:
         checks = [sys.executable,'-m','unittest','experiments.episode_return.test_runner','-v']
         subprocess.run(checks,cwd=ROOT,check=True,timeout=600)
     command = [sys.executable,'-u','-m','experiments.episode_return.runner',
         '--method',cell['algorithm'],'--lr',str(cell['lr_index']),'--seed',str(cell['seed']),
         '--out',str(out),'--max-seconds','10800']
-    if parent:
+    if initial_extension:
+        command.extend(['--extend-from',str(input_folder)])
+    elif parent:
         command.append('--resume')
     started = time.monotonic()
     log = ROOT/'episode_worker.log'
     with log.open('w',encoding='utf-8') as stream:
         child = subprocess.Popen(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT)
+        # A startup acknowledgment follows explicit adoption, never merely Popen.
+        origin_file=out/'continuation_origin.json'
+        deadline=time.monotonic()+120
+        while not origin_file.exists() and child.poll() is None and time.monotonic()<deadline:
+            time.sleep(.25)
         started_receipt = dict(campaign=request['campaign'],cell=cell['id'],segment=entry['segment'],
             run_id=os.environ['GITHUB_RUN_ID'],attempt='1',source_commit=os.environ['GITHUB_SHA'],
             plan_hash=digest(plan()),preflight_passed=True,formal_process_started=True,
-            child_pid=child.pid,resumed=bool(parent),utc_epoch=time.time(),
+            child_pid=child.pid,resumed=bool(parent),explicit_budget_extension=initial_extension,
+            parent_episodes=2000,target_episodes=3000,lr_schedule='terminal10percent retained',utc_epoch=time.time(),
             actual_region_population=[34,33,33],arrival_steps=100,drainage_included=True)
         started_receipt.update(algorithm=cell['algorithm'],lr_index=cell['lr_index'],seed=cell['seed'],
             actor_lr=cell['actor_lr'],critic_lr=cell['critic_lr'])
-        try:
-            api.upload(request['release_id'],cell['id']+f".segment{entry['segment']:03d}.started.json",
-                       json.dumps(started_receipt).encode())
-        except Exception as error:
-            # Optional observability cannot cancel a healthy bounded child.
-            print('Startup receipt upload unavailable:',type(error).__name__,flush=True)
+        if origin_file.exists():
+            origin=json.loads(origin_file.read_text())
+            started_receipt.update(parent_adoption_verified=True,
+                parent_checkpoint_sha256=origin['parent_checkpoint_sha256'],
+                parent_csv_sha256=origin['parent_csv_sha256'])
+            try:
+                api.upload(request['release_id'],cell['id']+f".segment{entry['segment']:03d}.started.json",
+                           json.dumps(started_receipt).encode())
+            except Exception as error:
+                # Optional observability cannot cancel a healthy bounded child.
+                print('Startup receipt upload unavailable:',type(error).__name__,flush=True)
         result_code = child.wait(timeout=18000)
     done = json.loads((out/'complete.json').read_text()) if (out/'complete.json').exists() else None
     paused = json.loads((out/'paused.json').read_text()) if (out/'paused.json').exists() else None

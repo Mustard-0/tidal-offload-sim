@@ -15,6 +15,8 @@ def plot_cell(folder,label):
     import matplotlib.pyplot as plt
     fig,ax=plt.subplots(figsize=(9,4.6))
     ax.plot([int(r['episode']) for r in rows],[float(r['episode_return']) for r in rows],lw=.8)
+    ax.axvline(2000,color='#495057',ls='--',lw=1,label='Budget extension at2000')
+    ax.legend()
     ax.set(xlabel='Completed episode',ylabel='Episode return (higher is better)',
         title=label+' | actual N=100 (34/33/33), seed87021')
     ax.grid(alpha=.2)
