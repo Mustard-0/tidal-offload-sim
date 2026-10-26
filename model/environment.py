@@ -69,15 +69,18 @@ class Environment:
                                  if math.isfinite(measure_end) else None)
         self.collect = collect
         self.g = len(cfg["region_centers_m"])
-        self.u = cfg["users_per_region"] * self.g
+        from population import region_counts
+        self.region_counts = np.asarray(region_counts(cfg), dtype=int)
+        self.region_offsets = np.r_[0, np.cumsum(self.region_counts)]
+        self.u = int(self.region_counts.sum())
         self.b = len(cfg["bs_xy_m"])
         self.s = len(cfg["sat_overhead_s"])
         if self.b + self.s != N_ROUTE or self.g != 3:
             raise ValueError("This protocol fixes 3 regions, 8 BSs and 3 satellites")
-        self.region = np.repeat(np.arange(self.g), cfg["users_per_region"])
+        self.region = np.repeat(np.arange(self.g), self.region_counts)
         positions = []
         for g, center in enumerate(cfg["region_centers_m"]):
-            draws = np.random.default_rng(np.random.SeedSequence([seed, 1, g])).random((cfg["users_per_region"], 2))
+            draws = np.random.default_rng(np.random.SeedSequence([seed, 1, g])).random((int(self.region_counts[g]), 2))
             angle, radius = 2*np.pi*draws[:, 0], cfg["region_radius_m"]*np.sqrt(draws[:, 1])
             positions.append(np.asarray(center) + np.c_[radius*np.cos(angle), radius*np.sin(angle)])
         self.xy = np.concatenate(positions)
@@ -141,7 +144,7 @@ class Environment:
         # Counter-keyed streams keep existing users' arrivals paired across scales.
         counts = np.concatenate([
             np.random.default_rng(np.random.SeedSequence([self.seed, 2, g, self.slot])).poisson(
-                c["arrival_per_user_s"] * modulation[g] * c["dt_s"], c["users_per_region"])
+                c["arrival_per_user_s"] * modulation[g] * c["dt_s"], int(self.region_counts[g]))
             for g in range(self.g)
         ])
         self.arrival_hash = hashlib.sha256(bytes.fromhex(self.arrival_hash)+counts.astype("<i4").tobytes()).hexdigest()
@@ -150,7 +153,7 @@ class Environment:
             self.window_counts[region] += counts[user]
             profiles = c.get("task_profiles", [])
             rng = np.random.default_rng(np.random.SeedSequence(
-                [self.seed, 6, region, int(user) % c["users_per_region"], self.slot]))
+                [self.seed, 6, region, int(user)-int(self.region_offsets[region]), self.slot]))
             for _ in range(int(counts[user])):
                 p = profiles[int(rng.choice(len(profiles), p=[x["probability"] for x in profiles]))] if profiles else {
                     "name":"homogeneous", "bits":c["task_bits"], "cycles":c["task_cycles"], "deadline_s":c["deadline_s"]}
@@ -226,15 +229,15 @@ class Environment:
         obs[22:33] = queue/c["time_ref_s"]
         obs[33:44] = mask
         obs[44:51] = [age/c["time_ref_s"], (j.deadline-age)/c["time_ref_s"],
-                      xy[0]/10000, xy[1]/10000, j.batch_n/c["users_per_region"],
+                      xy[0]/10000, xy[1]/10000, j.batch_n/self.region_counts[j.region],
                       j.epsilon*2*c["region_radius_m"], j.region/2]
-        scale = 100*c["arrival_per_user_s"]
+        scale = self.region_counts[j.region]*c["arrival_per_user_s"]
         obs[51:59] = [self.queue_pressure[j.region], float(self.high_tide[j.region]),
                       j.bits/c["task_bits"], j.cycles/c["task_cycles"],
-                      len(self.staging[j.region])/c["users_per_region"],
+                      len(self.staging[j.region])/self.region_counts[j.region],
                       self.last_observed[j.region]/scale, self.previous_forecast[j.region]/scale,
                       errors[j.region]/scale]
-        obs[59:62] = self.previous_forecast/scale
+        obs[59:62] = self.previous_forecast/(self.region_counts*c["arrival_per_user_s"])
         if self.method == "TMAPO-NoPred":
             obs[57:62] = 0
         return np.clip(obs, -100, 100), mask, cost
@@ -273,7 +276,7 @@ class Environment:
                                           for mask in self.visibility])
         self.high_tide = np.where(self.high_tide, self.queue_pressure > c.get("low_queue_fraction", .3),
                                   self.queue_pressure >= c.get("high_queue_fraction", .6))
-        rate_scale = 100*c["arrival_per_user_s"]
+        rate_scale = self.region_counts*c["arrival_per_user_s"]
         predicted = self.previous_forecast
         pred_error = np.mean(self.pred_error, axis=0) if self.pred_error else np.zeros(self.g)
         public_cost = {}
@@ -286,8 +289,8 @@ class Environment:
         for user, pending in enumerate(self.pending):
             g = self.region[user]
             own_work = self.work(user)/c["cpu_ue"]
-            obs[user, :12] = [len(pending)/20, own_work/.5, pools[g]/c["users_per_region"],
-                              self.last_observed[g]/rate_scale, predicted[g]/rate_scale, pred_error[g]/rate_scale,
+            obs[user, :12] = [len(pending)/20, own_work/.5, pools[g]/self.region_counts[g],
+                              self.last_observed[g]/rate_scale[g], predicted[g]/rate_scale[g], pred_error[g]/rate_scale[g],
                               g/2, ground_mean, ground_max, satellite_mean, 0, 0]
             if pending:
                 j = self.tasks[pending[0]]
@@ -322,18 +325,18 @@ class Environment:
             if reports:
                 obs[self.u+g] = np.mean([self.route_features(j)[0] for j in reports], axis=0)
             obs[self.u+g, 51:54] = [self.queue_pressure[g], float(self.high_tide[g]), 0]
-            obs[self.u+g, 54:59] = [len(reports)/100, pools[g]/100, self.last_observed[g]/rate_scale, predicted[g]/rate_scale, pred_error[g]/rate_scale]
+            obs[self.u+g, 54:59] = [len(reports)/self.region_counts[g], pools[g]/self.region_counts[g], self.last_observed[g]/rate_scale[g], predicted[g]/rate_scale[g], pred_error[g]/rate_scale[g]]
             obs[self.u+g, 59:64] = self.batch_state(g)
         global_obs = np.zeros(OBS_DIM, np.float32)
         global_obs[:11] = node_work/.1
         by_node, _ = self.link_counts()
         global_obs[11:22] = [by_node[n]/50 for n in range(N_ROUTE)]
-        global_obs[22:25] = pools/c["users_per_region"]
+        global_obs[22:25] = pools/self.region_counts
         global_obs[25:28] = self.last_observed/rate_scale
         global_obs[28:31] = predicted/rate_scale
         global_obs[31:34] = pred_error/rate_scale
         global_obs[34:37] = [len(self.tasks)/max(1,self.u), np.mean(obs[:self.u,1]), np.max(obs[:self.u,1])]
-        global_obs[37:40] = [len(group)/c["users_per_region"] for group in self.staging]
+        global_obs[37:40] = [len(group)/self.region_counts[g] for g,group in enumerate(self.staging)]
         global_obs[40:43] = self.queue_pressure
         global_obs[43:46] = self.high_tide
         if self.method == "TMAPO-NoPred":
@@ -348,12 +351,13 @@ class Environment:
         if not ids:
             return np.zeros(5, np.float32)
         oldest = min((self.tasks[jid] for jid in ids), key=lambda j: j.arrival)
-        target = self.min_batch or c["users_per_region"]
+        population = int(self.region_counts[region])
+        target = self.min_batch or population
         return np.asarray([
-            len(ids)/c["users_per_region"],
+            len(ids)/population,
             oldest.active_wait/max(c["wait_max_s"], c["dt_s"]),
             (oldest.deadline-(self.time-oldest.arrival))/oldest.deadline,
-            (len(ids)-target)/c["users_per_region"],
+            (len(ids)-target)/population,
             float(self.min_batch is not None),
         ], dtype=np.float32)
 
@@ -366,9 +370,10 @@ class Environment:
         c = self.cfg
         pending = sum(bool(q) and u not in self.staged_users for u, q in enumerate(self.pending)
                       if self.region[u] == region)
-        current_rate = self.last_observed[region]/c["users_per_region"] if self.windows_seen else c["arrival_per_user_s"]
-        fill_time = expected_batch_fill_s(c["users_per_region"], len(tasks), pending,
-                                         self.min_batch or c["users_per_region"]+1, current_rate)
+        population = int(self.region_counts[region])
+        current_rate = self.last_observed[region]/population if self.windows_seen else c["arrival_per_user_s"]
+        fill_time = expected_batch_fill_s(population, len(tasks), pending,
+                                         self.min_batch or population+1, current_rate)
         oldest = min(tasks, key=lambda j: j.arrival)
         feature, feasible, _ = self.route_features(oldest, c["region_centers_m"][region])
         service = float(np.min(feature[:N_ROUTE][feasible])*c["time_ref_s"]) if feasible.any() else math.inf
@@ -564,7 +569,8 @@ class Environment:
         scale = self.cfg["arrival_per_user_s"]*self.cfg["dt_s"]
         team = -self.step_cost/(self.u*scale)
         user = -self.user_step_cost/scale
-        regional = user.reshape(self.g, self.cfg["users_per_region"]).mean(axis=1)
+        regional = np.asarray([user[self.region_offsets[g]:self.region_offsets[g+1]].mean()
+                               for g in range(self.g)])
         return ((1-local_fraction)*team+local_fraction*np.r_[user, regional]).astype(np.float32)
 
     def advance(self, end_time):

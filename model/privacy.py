@@ -69,8 +69,9 @@ def _first_amplifying_batch(max_distinct, eps_req, delta_req, step, maximum):
 
 def amplification_threshold(cfg):
     """Smallest attainable distinct-user batch with a nonzero accountant gain."""
+    from population import region_counts
     return _first_amplifying_batch(
-        int(cfg["users_per_region"]), float(cfg["epsilon_req"]),
+        max(region_counts(cfg)), float(cfg["epsilon_req"]),
         float(cfg["delta_req"]), float(cfg["accountant_grid"]),
         float(cfg["accountant_max_eps0"]),
     )

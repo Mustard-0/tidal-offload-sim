@@ -39,10 +39,10 @@ class CandidateRestrictedEnvironment(CrossSlotWLOEnvironment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         c = self.cfg
-        if (self.u != 300 or c["region_radius_m"] != 500. or c["epsilon_req"] != 1.
+        if (c["region_radius_m"] != 500. or c["epsilon_req"] != 1.
                 or c["delta_req"] != 1e-6 or c["wait_max_s"] != .02
                 or c["report_shrink"] != .5):
-            raise ValueError("This study fixes N300, R500m, epsilon1, delta1e-6, wait20ms, shrink0.5")
+            raise ValueError("Expected fixed R500m, epsilon1, delta1e-6, wait20ms, shrink0.5")
         self.admission_history = defaultdict(deque)
         self.max_observed_wait = 0.
         self.draining = False
@@ -63,7 +63,7 @@ class CandidateRestrictedEnvironment(CrossSlotWLOEnvironment):
         self.arrival_hash = h.hexdigest()
 
     def eps0(self, n):
-        if n < 1 or int(n) != n or n > self.cfg["users_per_region"]:
+        if n < 1 or int(n) != n or n > max(self.region_counts):
             raise ValueError("n is actual within-region distinct batch count")
         return calibrate(int(n), self.cfg["epsilon_req"], self.cfg["delta_req"],
                          self.cfg["accountant_grid"], self.cfg["accountant_max_eps0"])
@@ -105,9 +105,9 @@ class CandidateRestrictedEnvironment(CrossSlotWLOEnvironment):
         # Public pool counts must reflect class pools, not the unused legacy pool.
         for g in range(self.g):
             count = sum(len(ids) for (region, _), ids in self.class_staging.items() if region == g)
-            glob[37+g] = count/c["users_per_region"]
+            glob[37+g] = count/self.region_counts[g]
         glob[46] = float(self.draining)
-        glob[47] = (max(0, self.arrival_stop_slot-self.slot)/6000
+        glob[47] = (max(0, self.arrival_stop_slot-self.slot)/c.get('observation_horizon_slots',6000)
                     if self.arrival_stop_slot is not None else 0.)
         return context, glob, masks, users, ready
 
@@ -120,13 +120,14 @@ class CandidateRestrictedEnvironment(CrossSlotWLOEnvironment):
         waited = max(j.active_wait for j in tasks)
         obs = base.copy()
         release_cost = c["weight_quality"]*self.q_estimate(n)/c["quality_ref_m"]
-        obs[0:3] = [n/c["users_per_region"], waited/c["wait_max_s"], remaining/c["deadline_s"]]
+        population = int(self.region_counts[region])
+        obs[0:3] = [n/population, waited/c["wait_max_s"], remaining/c["deadline_s"]]
         obs[17:19] = [release_cost-info["expected_quality_gain"]+info["expected_wait_cost"], release_cost]
         obs[10] = next((i+1 for i, p in enumerate(c["task_profiles"]) if p["name"] == profile), 0)
-        obs[20:26] = [n/c["users_per_region"], self.eps0(n), info["horizon_s"]/c["wait_max_s"],
+        obs[20:26] = [n/population, self.eps0(n), info["horizon_s"]/c["wait_max_s"],
                        info["probability"], info["expected_quality_gain"], info["expected_wait_cost"]]
-        obs[59:64] = [n/c["users_per_region"], waited/c["wait_max_s"], remaining/c["deadline_s"],
-                      (n-(self.group_target or c["users_per_region"]+1))/c["users_per_region"], -1.]
+        obs[59:64] = [n/population, waited/c["wait_max_s"], remaining/c["deadline_s"],
+                      (n-(self.group_target or population+1))/population, -1.]
         if self.collect:
             self.wait_decision_rows.append(dict(time_s=self.time, region=region, task_class=profile, **info))
         return obs, np.asarray([info["allow"], False, True], dtype=bool)

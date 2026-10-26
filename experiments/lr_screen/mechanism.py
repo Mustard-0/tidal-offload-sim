@@ -28,8 +28,9 @@ def actual_batch(tasks, cfg):
     if len({j.user for j in tasks}) != len(tasks) or len({j.id for j in tasks}) != len(tasks):
         raise ValueError("Batch users and task IDs must be distinct")
     n = len(tasks)
-    size = cfg['users_per_region']
-    if n > size or any(j.region != j.user // size for j in tasks):
+    from population import region_counts, user_region
+    size = region_counts(cfg)[tasks[0].region]
+    if n > size or any(j.region != user_region(cfg,j.user) for j in tasks):
         raise ValueError("User does not belong to this fixed public region")
     eps0 = calibrate(n, cfg['epsilon_req'], cfg['delta_req'],
                      cfg['accountant_grid'], cfg['accountant_max_eps0'])

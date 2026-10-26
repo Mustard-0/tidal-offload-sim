@@ -50,7 +50,7 @@ class NewManuscriptEnvironment(Environment):
             n = pending_types[(j.region, j.profile)]
             # This is a PUBLIC count estimate, not the future real batch:
             # other users may choose L or W instead of O.
-            context[u, 20] = n / max(1,self.cfg["users_per_region"])
+            context[u, 20] = n / self.region_counts[j.region]
             estimated_eps = local_epsilon(self.cfg, n, self.method == "TMAPO-NoAmp")
             context[u, 21] = estimated_eps*2*self.cfg["region_radius_m"]
             context[u, 22] = max(0.,wait_remaining) / max(self.cfg["wait_max_s"],self.cfg["dt_s"])

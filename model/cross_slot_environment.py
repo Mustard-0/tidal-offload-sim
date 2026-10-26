@@ -52,10 +52,10 @@ class CrossSlotWLOEnvironment(NewManuscriptEnvironment):
             # Observed existing distinct users are not guaranteed to be
             # future released users if this user selects L instead.
             current=len(pool)
-            context[u,23]=current/max(self.cfg["users_per_region"],1)
-            context[u,24]=(current+context[u,20]*self.cfg["users_per_region"])/max(
-                self.cfg["users_per_region"],1)
-            context[u,25]=float(self.group_target or self.cfg["users_per_region"]+1)/self.cfg["users_per_region"]
+            population=int(self.region_counts[j.region])
+            context[u,23]=current/population
+            context[u,24]=(current+context[u,20]*population)/population
+            context[u,25]=float(self.group_target or population+1)/population
         if self.cfg.get("hide_tidal_observations",False):
             # Remove explicit tidal signals, preserve actual arrivals and queues.
             context[:self.u,3:6]=0.
@@ -86,40 +86,41 @@ class CrossSlotWLOEnvironment(NewManuscriptEnvironment):
         oldest_wait=max(j.active_wait for j in pool)
         max_wait=c["wait_max_s"]
         local_eps=local_epsilon(c,n,self.method=="TMAPO-NoAmp")
-        avail=c["users_per_region"]-n
+        population=int(self.region_counts[region])
+        avail=population-n
         profiles=c.get("task_profiles",[])
         profile_prob=next((p["probability"] for p in profiles if p["name"]==profile),1/3)
         # Region-level Holt predictor / public arrival history; no future leak.
-        region_rate=(c["users_per_region"]*c["arrival_per_user_s"]
+        region_rate=(population*c["arrival_per_user_s"]
                      if c.get("hide_tidal_observations",False)
                      else (self.previous_forecast[region] if self.windows_seen
-                           else c["users_per_region"]*c["arrival_per_user_s"]))
+                           else population*c["arrival_per_user_s"]))
         class_rate=max(0.,region_rate)*profile_prob
         remain=max(0.,min(max_wait-oldest_wait,
               min_remaining-c.get("min_service_reserve_s",.04)))
         expected_new=avail*(1-math.exp(-class_rate*remain/
-                             max(c["users_per_region"],1)))
-        est_n=min(c["users_per_region"],max(n,round(n+expected_new)))
+                             population))
+        est_n=min(population,max(n,round(n+expected_new)))
         future_eps=local_epsilon(c,est_n,self.method=="TMAPO-NoAmp")
         gain_now=1-c["epsilon_req"]/(local_eps*2*c["region_radius_m"])
         gain_future=1-c["epsilon_req"]/(future_eps*2*c["region_radius_m"])
         # Match the user actor's shared 3-actions logit cost prior:
         # action 0=WAIT (prior 0), 1=LOCAL masked, 2=RELEASE.
-        obs[0:3]=[n/c["users_per_region"],
+        obs[0:3]=[n/population,
                    oldest_wait/max(max_wait,c["dt_s"]),
                    min_remaining/max(c["deadline_s"],.01)]
         obs[17]=max(0.,oldest_wait/max_wait)  # masked L, not used for release comparison
         obs[18]=max(0.,n*0.001+ (1-gain_now))*0.20
-        obs[20:26]=[n/c["users_per_region"],local_eps*2*c["region_radius_m"],
+        obs[20:26]=[n/population,local_eps*2*c["region_radius_m"],
                     remain/max(max_wait,c["dt_s"]),class_rate/100.,
                     expected_new/20.,gain_future-gain_now]
         obs[51:54]=[self.queue_pressure[region],
                     0 if c.get("hide_tidal_observations",False) else self.high_tide[region],
                     remain/max(max_wait,c["dt_s"])]
-        obs[59:64]=[n/c["users_per_region"],
+        obs[59:64]=[n/population,
                      oldest_wait/max(max_wait,c["dt_s"]),
                      min_remaining/max(c["deadline_s"],.01),
-                     (n-(self.group_target or c["users_per_region"]+1))/c["users_per_region"],
+                     (n-(self.group_target or population+1))/population,
                      float(profile_prob)]
         can_hold=(remain>=c["dt_s"]-1e-9 and avail>0 and
                   self.time-oldest.arrival < max_wait-1e-9)
