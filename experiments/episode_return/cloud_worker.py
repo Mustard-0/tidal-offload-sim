@@ -66,10 +66,21 @@ def run(entry, request):
     started = time.monotonic()
     log = ROOT/'episode_worker.log'
     with log.open('w',encoding='utf-8') as stream:
-        result = subprocess.run(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT,timeout=18000)
+        child = subprocess.Popen(command,cwd=ROOT,stdout=stream,stderr=subprocess.STDOUT)
+        started_receipt = dict(campaign=request['campaign'],cell=cell['id'],segment=entry['segment'],
+            run_id=os.environ['GITHUB_RUN_ID'],attempt='1',source_commit=os.environ['GITHUB_SHA'],
+            plan_hash=digest(plan()),preflight_passed=True,formal_process_started=True,
+            child_pid=child.pid,resumed=bool(parent),utc_epoch=time.time())
+        try:
+            api.upload(request['release_id'],cell['id']+f".segment{entry['segment']:03d}.started.json",
+                       json.dumps(started_receipt).encode())
+        except Exception as error:
+            # Optional observability cannot cancel a healthy bounded child.
+            print('Startup receipt upload unavailable:',type(error).__name__,flush=True)
+        result_code = child.wait(timeout=18000)
     done = json.loads((out/'complete.json').read_text()) if (out/'complete.json').exists() else None
     paused = json.loads((out/'paused.json').read_text()) if (out/'paused.json').exists() else None
-    failed = result.returncode != 0 or (out/'failure.json').exists()
+    failed = result_code != 0 or (out/'failure.json').exists()
     state = 'failed' if failed else 'completed' if done else 'paused' if paused else 'unknown'
     shutil.copy2(log,out/'cloud_worker.log')
     checkpoint = json.loads((out/'checkpoint_status.json').read_text())
@@ -80,7 +91,7 @@ def run(entry, request):
     packet = seal(pack(out),key,header)
     name = cell['id']+f".segment{entry['segment']:03d}.enc"
     api.upload(request['release_id'],name,packet)
-    receipt = dict(header,state=state,child_exited=True,exit_code=result.returncode,
+    receipt = dict(header,state=state,child_exited=True,exit_code=result_code,
         archive_name=name,archive_sha256=sha(packet),archive_size=len(packet),
         paused_reason=paused['reason'] if paused else None,
         env_steps=checkpoint['env_steps'],episodes=checkpoint['completed_episodes'],

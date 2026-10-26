@@ -1,17 +1,41 @@
 """Only the new counting/checkpoint path; original mechanisms remain unchanged."""
 import json
 from pathlib import Path
-import pickle
+from collections import deque
 import tempfile
 import unittest
 from .protocol import configuration, plan, ROOT
 from .runner import train
-from experiments.lr_screen.runtime import torch
+from experiments.lr_screen.runtime import np, torch
 
 COMPONENT = dict(episodes=2, episode_steps=256, checkpoint_episodes=1)
 
 
 class EpisodeTests(unittest.TestCase):
+    def assert_state_equal(self, left, right, path='state'):
+        self.assertEqual(type(left),type(right),path)
+        if isinstance(left,torch.Tensor):
+            self.assertTrue(torch.equal(left,right),path)
+        elif isinstance(left,np.ndarray):
+            self.assertEqual(left.dtype,right.dtype,path)
+            np.testing.assert_array_equal(left,right,err_msg=path)
+        elif isinstance(left,np.random.Generator):
+            self.assert_state_equal(left.bit_generator.state,right.bit_generator.state,path+'.generator')
+        elif isinstance(left,np.random.RandomState):
+            self.assert_state_equal(left.get_state(),right.get_state(),path+'.rng')
+        elif isinstance(left,dict):
+            self.assertEqual(set(left),set(right),path)
+            for key in left:
+                self.assert_state_equal(left[key],right[key],path+'.'+str(key))
+        elif isinstance(left,(tuple,list,deque)):
+            self.assertEqual(len(left),len(right),path)
+            for i,(a,b) in enumerate(zip(left,right)):
+                self.assert_state_equal(a,b,path+'.'+str(i))
+        elif hasattr(left,'__dict__'):
+            self.assert_state_equal(vars(left),vars(right),path+'.vars')
+        else:
+            self.assertEqual(left,right,path)
+
     def test_budget(self):
         p = plan()
         self.assertEqual(len(p['cells']), 3)
@@ -45,11 +69,12 @@ class EpisodeTests(unittest.TestCase):
             self.assertTrue(train(split,'TMAPO',resume=True,component=COMPONENT))
             actual = torch.load(split/'latest.pt',weights_only=False)
             self.assertEqual(reference['rows'],actual['rows'])
-            self.assertEqual(pickle.dumps(reference['environment']),pickle.dumps(actual['environment']))
-            self.assertTrue(torch.equal(reference['rng']['torch'],actual['rng']['torch']))
-            for module in ('actors','critic'):
-                for name,value in reference['learner'][module].items():
-                    self.assertTrue(torch.equal(value,actual['learner'][module][name]))
+            # Pickle's reference memo/alias encoding is not state semantics.
+            # Compare every environment field and full learner/optimizer/RNG
+            # value instead; this also diagnoses the exact differing field.
+            self.assert_state_equal(reference['learner'],actual['learner'],'learner')
+            self.assert_state_equal(reference['environment'],actual['environment'],'environment')
+            self.assert_state_equal(reference['rng'],actual['rng'],'rng')
             initial_cfg, initial_t = configuration('TMAPO')
             from experiments.lr_screen.runtime import seed_all
             from experiments.lr_screen.algorithms import learner_for

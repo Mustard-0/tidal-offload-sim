@@ -1,11 +1,11 @@
 {
   "files": {
     "experiments/episode_return/__init__.py": "c863252b6dd329b6bb16ef1d13b2498c3360d75b184c9f579c0d9c4a1a176a3e",
-    "experiments/episode_return/cloud_worker.py": "81da0a2cab0750238b104b15df529c03611e2a9310a3aceb718368a6ed00f30b",
+    "experiments/episode_return/cloud_worker.py": "f81889c4dd6f8c83417eab531dbad1f41e82a3025634f1d48b8866da710c81f6",
     "experiments/episode_return/freeze.py": "6ccbd2cc94b2d44ecdeac3c95acf68d5cf146c7cd071bcebee49e1673e227c96",
     "experiments/episode_return/protocol.py": "16003380cc592906c40906bf26812d26902870d36b8508c515e0f1f06ed597b4",
     "experiments/episode_return/runner.py": "afa3840ee29b27097c863e1bd9bb3a027d66e9d721827a4fd32096a7271942ed",
-    "experiments/episode_return/test_runner.py": "c59cad48a5dbc77efd6190b5a47de721b3fefb83297f5911e21f3e2915289335",
+    "experiments/episode_return/test_runner.py": "43266a28e35b51025bf82ad2444f9924ff3baecafa28ea42df7b3039bd1177b6",
     "experiments/lr_screen/__init__.py": "06df18419df06d84339b448ee7bceb85a1f5508722044674a6381bb3c5184a24",
     "experiments/lr_screen/accept_preflight.py": "728d7be805888ea9f7e1d9592ee5d7bc945ed470e4d48ab9f62f19300fe51a30",
     "experiments/lr_screen/algorithms.py": "831ba75af83fbcba2b1b992f578fcc21aac6d4921577d9bdc305e9cba6d9f00e",
