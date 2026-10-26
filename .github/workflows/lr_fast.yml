@@ -1,4 +1,4 @@
-name: LR screen free parallel CPU
+name: Three algorithms 2000 complete episodes - free CPU
 on:
   push:
     tags: ['lr-fast-run-*']
@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '3.9.25'
       - id: plan
-        run: python -m experiments.lr_screen.cloud_worker --plan
+        run: python -m experiments.episode_return.cloud_worker --plan
   train:
     needs: plan
     name: ${{ matrix.cell }}
@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 330
     strategy:
       fail-fast: false
-      max-parallel: 11
+      max-parallel: 3
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -54,4 +54,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
           LR_SCREEN_CELL: ${{ matrix.cell }}
-        run: python -m experiments.lr_screen.cloud_worker --cell "$LR_SCREEN_CELL"
+        run: python -m experiments.episode_return.cloud_worker --cell "$LR_SCREEN_CELL"
