@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.runtime/
+runs/
+evidence/
+*.pt
+*.zip
+*.enc
+*.pdf
+*.log
+*.env
+*transport_key*

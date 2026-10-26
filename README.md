@@ -1,0 +1,97 @@
+# High-load causal RL and matched ablations, 2026-10-27
+
+Independent NEW experiment. Old N100/3000-episode sources, weights and results
+are preserved. No promise of TMAPO superiority or stable convergence.
+
+## Actual corrections
+
+-100 steps is a ROLLOUT/UPDATE, not a drained episode. Queues and causal Holt
+  history persist across updates. Each physical cycle is300s/30000 steps, with
+ 29800 admission steps and200 fixed drainage steps. Ten cycles = exactly300000
+  environment interactions/3000 updates for EVERY cell, including drainage.
+- Real populations by cycle:300,200,400,300,100,400,200,300,400,300, split equally
+  across3 regions. Same seeded tasks for every method; no phantom batch users.
+- R500m, epsilon1, delta1e-6, improved bounded actual-region/class distinct-user
+  calibration and shrink.5 retained. Same tasks, deadlines, CPU and links.
+- Active WAIT is ZERO for every main method. The20ms ceiling remains a hard
+  limit, not mandatory delay. FCFS compute queueing is separately measured.
+- Categorical learned policies are sampled at deployment as trained. Hard
+  argmax is a secondary diagnosis, never used only for weak baselines. TD3
+  uses deterministic continuous intents with no extra evaluation exploration.
+- Latency-first common cost: delay/.1s + .1*energy/.1J +5*QoS failure. A100ms
+  delay costs1,100mJ costs.1, a violation costs5. QL is diagnostic only.
+  This is a NEW declared objective, not relabeling old rewards/results.
+- Correct nonterminal bootstrap uses the next CURRENT post-arrival state.
+  A prepared-slot cache prevents duplicate generation on resume. Checkpoints
+  include queues, predictor, prepared state, optimizer, replay/pending actions,
+  full RNG and counters. Exact mid-cycle resume is tested.
+- Administrative observation-window end flags are hidden from every learned
+  policy/critic. No future workload or true coordinates enter decision inputs.
+- MARATD3 uses compact chronological replay, excludes missing evicted context,
+  and buckets minibatches by real agent count across population changes.
+
+## Finite matrix and validation
+
+31 screen cells: TMAPO5LR x3seeds; IPPO/PPO each2LR x2seeds; SD-SAC-Adapted and
+MARATD3-Adapted each2LR x2seeds. Rates are listed in protocol.py. TMAPO-family
+critic/actor ratio3; discrete SAC equal actor/critic rates. MARATD3 LSTM rates
+are.1 x its listed MLP rate. Seeds are87021/87022/87023, not selected by outcome.
+
+After the main screen, all methods select LR by the SAME terminal validation
+pooled physical cost, retaining all seeds and terminal budget. No lucky
+checkpoint selection. Initial policy and blocks1000/2000/3000 are evaluated.
+Validation uses seeds814001/814019, actual N200/300/400, phases30/150,3s actual
+causal warmup+3s measured cohort with full drain. Short validation is a screening
+tool, not full-cycle scientific evidence.
+
+Then3 ablations x3seeds use the selected full TMAPO LR: NoForecast, NoPrior,
+LocalCritic. At identical LR/seed, LocalCritic is exactly IPPO; compatible
+completed IPPO cells are referenced with their original origin, not retrained
+or passed off as new executions. At most40 training cells (38 if two exact
+aliases can be reused). NoWait is not a separate curve because active WAIT is
+already zero. Ablations change policy information/components, NOT true loads.
+
+Final scalability: real N100/200/300/400, four NEW held-out seeds,5s causal
+warmup+300s measurement/full tidal period+natural drainage. Compare all main
+methods, Greedy, GeoI-Greedy and3 ablations. GeoI-Greedy explicitly changes the
+privacy mechanism; it is not a same-noise algorithm-only ablation. Store raw
+task/batch CSV gzips, failures, delay/energy/QoS, arrival hashes and provenance.
+
+The recent-paper methods are architecture adaptations, not exact reproductions
+of the authors' physical topology, resource-allocation or SDN implementation.
+They are not yet trained merely because component tests passed.
+
+## Meaning of Greedy
+
+Greedy picks the feasible node with minimum CURRENT reported-state physical
+cost (queue, transmission, computation, energy and deadline estimate). It does
+not look at future arrivals. Those SAME estimates enter every learner's route
+observation and common analytic cost prior. The learned actor can change the
+choice. A strong current-state heuristic is still greedy; it is not a global
+future-aware optimum. Do not weaken it, add selective control-plane overhead,
+or alter the workload after observing rankings.
+
+## Execution / safety
+
+Code and component tests are separate from formal training. New formal models
+start from scratch; no old checkpoint is compatible with this new objective.
+Finite limits:7days,96 cumulative segments/cell,3h training segment, no retries
+of unknown/numerical/code failures. A local owner holds one exclusive lock,
+checks RAM, never kills user processes and saves at update boundaries.
+
+Cloud ciphertext/result/checkpoint transfer is currently PENDING explicit human
+approval after an application safety-review rejection. No public workflow or
+encrypted-upload worker was written or started. Local owner has NO networking
+or credential access. Public pure-code permission is not treated as permission
+to upload private results. Do not work around that rejection.
+
+```powershell
+$env:PYTHONPATH='F:/stin_project/experiment_runtime/torch_cpu_2_5_1;F:/stin_project/tmapo_lr_speed_20261026/.runtime'
+& D:/anaconda/envs/stin/python.exe -m experiments.highload.preflight
+# Only after the saved final preflight/source hashes match:
+& D:/anaconda/envs/stin/python.exe ops/local_owner.py --out runs/highload_local_01 --first-only
+```
+
+Plots must use cumulative environment steps/updates. Do NOT label3000 rollout
+updates as3000 drained episodes. Population-cycle boundaries must be disclosed;
+training-return movement across loads alone is not convergence evidence.
