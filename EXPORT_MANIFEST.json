@@ -54,7 +54,7 @@
     "model/test_protocol.py": "b54efc78f41ef2aba7e3cfb766260441811c3fe71cc1f1f9ef8f4d3673612fd2",
     "model/test_review_fixes.py": "fed837b25e09d4cd100bda9c24e451ec6ad6b5a7ab6af5feb0894d2e7a61f568",
     "model/workload.py": "8a526b57949d380bc27352b68295cb3fa021f5783eb1dc00fcf85b04d2b293f4",
-    ".github/workflows/lr_fast.yml": "0f3204d486fce79835bdcf1e9649e7f44974afb44ddeb0329bc81dd8ed006fca",
+    ".github/workflows/lr_fast.yml": "b33604c63f8b349587a96e1c5555454b7efc8ccb0e2f4cf26d9c3788a94aabeb",
     "cloud/contract.json": "1fb501aa3a7e98217683aab37480815aefd2b17bae06b39364a3e2b629d27d63"
   },
   "scope": "Pure code only; no private history, PDF, archives, metrics, logs, checkpoints or keys"
