@@ -21,8 +21,8 @@ def new_environment(cfg, seed, episode, arrival_steps):
     return env
 
 
-def train(out,method,resume=False,max_seconds=10800,component=None,stop_episode=None):
-    cfg,training=configuration(method)
+def train(out,method,resume=False,max_seconds=10800,component=None,stop_episode=None,lr=1,seed=87021):
+    cfg,training=configuration(method,lr,seed)
     if component:
         training.update(component)
     training['updates']=training['episodes']
@@ -37,17 +37,17 @@ def train(out,method,resume=False,max_seconds=10800,component=None,stop_episode=
     fd=os.open(out/'.worker.lock',os.O_CREAT|os.O_EXCL|os.O_WRONLY)
     os.write(fd,str(os.getpid()).encode())
     try:
-        return _train(out,method,cfg,training,resume,max_seconds,component,stop_episode)
+        return _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr)
     finally:
         os.close(fd)
         (out/'.worker.lock').unlink()
 
 
-def _train(out,method,cfg,training,resume,max_seconds,component,stop_episode):
+def _train(out,method,cfg,training,resume,max_seconds,component,stop_episode,lr=1):
     seed_all(training['seed'])
     actual=runtime_info('cpu')
     runtime={k:actual[k] for k in ('python','numpy','scipy','torch','device','torch_threads')}
-    identity=dict(schema='short100-natural-drain-v1',method=method,lr=1,environment=cfg,
+    identity=dict(schema='short100-natural-drain-v1',method=method,lr=lr,environment=cfg,
         training=training,runtime=runtime,source_hashes=source_hashes(),
         component_only=bool(component),transfer_integrated=True)
     identity_hash=digest(identity)
@@ -165,9 +165,11 @@ def main():
     p.add_argument('--out',type=Path,required=True)
     p.add_argument('--method',choices=('TMAPO','IPPO','PPO'),required=True)
     p.add_argument('--resume',action='store_true')
+    p.add_argument('--lr',type=int,default=1)
+    p.add_argument('--seed',type=int,default=87021)
     p.add_argument('--max-seconds',type=float,default=10800)
     a=p.parse_args()
-    train(a.out,a.method,a.resume,a.max_seconds)
+    train(a.out,a.method,a.resume,a.max_seconds,lr=a.lr,seed=a.seed)
 
 
 if __name__=='__main__':

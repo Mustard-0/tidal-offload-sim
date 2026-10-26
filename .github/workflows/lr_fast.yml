@@ -1,4 +1,4 @@
-name: N100 short arrival100 naturally drained episodes - free CPU
+name: N100 arrival100 drained episodes - 23 fixed LR seed cells - free CPU
 on:
   push:
     tags: ['lr-fast-run-*']
@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 330
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4

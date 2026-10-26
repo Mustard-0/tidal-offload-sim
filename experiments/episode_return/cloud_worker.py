@@ -18,7 +18,8 @@ def request_from_tag():
         '--format=%(contents)'],text=True))
     expected = {c['id'] for c in plan()['cells']}
     ids = [e['cell'] for e in request['entries']]
-    if request['plan_hash'] != digest(plan()) or len(ids) != len(set(ids)) or not set(ids) <= expected:
+    if (request['plan_hash'] != digest(plan()) or len(ids) != len(set(ids))
+            or not 1<=len(ids)<=16 or not set(ids) <= expected):
         raise ValueError('Unknown/duplicated cell or changed plan')
     if any(not 1 <= e['segment'] <= 96 for e in request['entries']):
         raise ValueError('Segment cap')
@@ -60,7 +61,8 @@ def run(entry, request):
         checks = [sys.executable,'-m','unittest','experiments.episode_return.test_runner','-v']
         subprocess.run(checks,cwd=ROOT,check=True,timeout=600)
     command = [sys.executable,'-u','-m','experiments.episode_return.runner',
-        '--method',cell['algorithm'],'--out',str(out),'--max-seconds','10800']
+        '--method',cell['algorithm'],'--lr',str(cell['lr_index']),'--seed',str(cell['seed']),
+        '--out',str(out),'--max-seconds','10800']
     if parent:
         command.append('--resume')
     started = time.monotonic()
@@ -72,6 +74,8 @@ def run(entry, request):
             plan_hash=digest(plan()),preflight_passed=True,formal_process_started=True,
             child_pid=child.pid,resumed=bool(parent),utc_epoch=time.time(),
             actual_region_population=[34,33,33],arrival_steps=100,drainage_included=True)
+        started_receipt.update(algorithm=cell['algorithm'],lr_index=cell['lr_index'],seed=cell['seed'],
+            actor_lr=cell['actor_lr'],critic_lr=cell['critic_lr'])
         try:
             api.upload(request['release_id'],cell['id']+f".segment{entry['segment']:03d}.started.json",
                        json.dumps(started_receipt).encode())
@@ -95,6 +99,8 @@ def run(entry, request):
         direction='output',run_id=os.environ['GITHUB_RUN_ID'],attempt='1',
         source_commit=os.environ['GITHUB_SHA'],plan_hash=digest(plan()),
         parent_sha256=parent['sha256'] if parent else None)
+    header.update(algorithm=cell['algorithm'],lr_index=cell['lr_index'],seed=cell['seed'],
+        actor_lr=cell['actor_lr'],critic_lr=cell['critic_lr'])
     packet = seal(pack(out),key,header)
     name = cell['id']+f".segment{entry['segment']:03d}.enc"
     api.upload(request['release_id'],name,packet)

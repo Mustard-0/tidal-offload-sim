@@ -4,7 +4,7 @@ from pathlib import Path
 from collections import deque
 import tempfile
 import unittest
-from .protocol import configuration, plan, ROOT
+from .protocol import configuration, plan, ROOT, SEEDS
 from .runner import train
 from experiments.lr_screen.runtime import np, torch
 
@@ -38,13 +38,60 @@ class EpisodeTests(unittest.TestCase):
 
     def test_budget(self):
         p = plan()
-        self.assertEqual(len(p['cells']), 3)
+        self.assertEqual(len(p['cells']), 23)
+        self.assertEqual(len({c['id'] for c in p['cells']}),23)
+        self.assertEqual({m:sum(c['algorithm']==m for c in p['cells']) for m in SEEDS},
+                         {'TMAPO':15,'IPPO':4,'PPO':4})
         for c in p['cells']:
-            _, t = configuration(c['algorithm'])
+            _, t = configuration(c['algorithm'],c['lr_index'],c['seed'])
             self.assertEqual(t['episodes'],2000)
             self.assertEqual(t['arrival_steps'],100)
+            self.assertEqual(t['seed'],c['seed'])
+            self.assertEqual(t['actor_lr'],c['actor_lr'])
+            self.assertEqual(t['critic_lr'],c['critic_lr'])
             self.assertEqual(p['population'],[34,33,33])
             self.assertNotIn('validation_interval',t)
+
+    def test_baseline_formal_prefix_is_unchanged(self):
+        expected={'TMAPO':(-24.231917200949628,-30.218177066922983),
+                  'IPPO':(-25.451871794091865,-30.556954513329558),
+                  'PPO':(-26.770828368360984,-28.796063202142946)}
+        scratch=ROOT/'.test_tmp'
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+            for method,values in expected.items():
+                out=Path(tmp)/method
+                self.assertFalse(train(out,method,component={'checkpoint_episodes':5},stop_episode=2))
+                saved=torch.load(out/'latest.pt',weights_only=False)
+                for row,value in zip(saved['rows'],values):
+                    self.assertAlmostEqual(row['episode_return'],value,places=10)
+
+    def test_new_lr_seed_paths_and_resume(self):
+        scratch=ROOT/'.test_tmp'
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+            traces=[]
+            for method,lr,seed in [('TMAPO',5,87023),('IPPO',2,87022),('PPO',2,87022)]:
+                out=Path(tmp)/method
+                self.assertTrue(train(out,method,component=COMPONENT,lr=lr,seed=seed))
+                manifest=json.loads((out/'manifest.json').read_text())
+                _,t=configuration(method,lr,seed)
+                self.assertEqual(manifest['lr'],lr)
+                self.assertEqual(manifest['training']['seed'],seed)
+                self.assertEqual(manifest['training']['actor_lr'],t['actor_lr'])
+                saved=torch.load(out/'latest.pt',weights_only=False)
+                traces.append([r['train_trace_hash'] for r in saved['rows']])
+                if method=='TMAPO':
+                    reference=saved
+            self.assertNotEqual(traces[0],traces[1])
+            self.assertEqual(traces[1],traces[2])
+            split=Path(tmp)/'split'
+            self.assertFalse(train(split,'TMAPO',component=COMPONENT,stop_episode=1,lr=5,seed=87023))
+            self.assertTrue(train(split,'TMAPO',resume=True,component=COMPONENT,lr=5,seed=87023))
+            actual=torch.load(split/'latest.pt',weights_only=False)
+            self.assert_state_equal(reference['learner'],actual['learner'],'new_lr_seed_learner')
+            self.assert_state_equal(reference['rng'],actual['rng'],'new_lr_seed_rng')
+            self.assert_state_equal(reference['environment'],actual['environment'],'new_lr_seed_environment')
 
     def test_real_nonuniform_membership_and_batch(self):
         from types import SimpleNamespace
