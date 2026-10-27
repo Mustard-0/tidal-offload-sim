@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.runtime/
+runs/
+evidence/
+*.pt
+*.enc
+*.zip
+*.pdf
+*.csv
