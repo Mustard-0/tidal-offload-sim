@@ -117,6 +117,11 @@ SAC training6GiB / final-test checkpoint loading10GiB, recurrent TD3 2.5GiB,
 other processes1.5GiB. Heavy replay models are NOT blindly packed fourfold.
 The worker commit that passed the cloud probe is pinned independently of the
 local scheduler commit; memory grouping only reduces that tested process count.
+The measured four-process aggregate throughput was1.83x, not4x; individual
+processes slowed from CPU contention. Therefore dispatch uses the SMALLEST
+process count needed for the ready queue/free machine slots, up to4. If enough
+machines are free, each cell gets its own runner. One pack per wave allows1/2/3/4
+processes with the same tested worker; polling is60s to leave API-rate headroom.
 
 Activation requires an actual cloud component-only serial-vs-four-process probe:
 numeric training rows and COMPLETE learner/optimizer/replay state hashes must

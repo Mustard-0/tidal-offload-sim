@@ -148,13 +148,16 @@ def run(root):
                     if ready and live_jobs<20:
                         # No extra cells: only the already-declared ready queue is packed.
                         while ready and live_jobs<20:
-                            take=memory_safe_prefix(state,ready,20-live_jobs)
+                            # Fill all available machines first; only share CPUs
+                            # when there are more ready cells than free machines.
+                            workers=min(4,math.ceil(len(ready)/(20-live_jobs)))
+                            take=memory_safe_prefix(state,ready[:workers],1)
                             dispatch(api,state,root,key,take);live_jobs+=math.ceil(len(take)/4);ready=ready[len(take):]
                     elif not ready and not active:
                         if state['phase']=='screen':activate_ablations(state)
                         elif state['phase']=='ablations':activate_evaluation(state)
                         else:state['status']='completed';break
-                save(root/'coordinator.json',state);time.sleep(30)
+                save(root/'coordinator.json',state);time.sleep(60)
             except (urllib.error.URLError,TimeoutError,ConnectionError,http.client.HTTPException) as error:
                 if isinstance(error,urllib.error.HTTPError) and error.code not in (429,500,502,503,504):raise
                 # Writes are not blindly retried: an unregistered dispatch must be reconciled.
