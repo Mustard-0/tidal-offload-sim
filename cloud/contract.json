@@ -1,0 +1,42 @@
+{
+  "source_hashes": {
+    "experiments/__init__.py": "5f9bbc132cfa542a87bb563acc3b9ba00a0f4e5cd615e8dddac0ccd0cf09256c",
+    "experiments/highload/__init__.py": "9277431097ed288c21069d8a39283f7ced29e1efdf2ffd6f0bd56ac0400b19a9",
+    "experiments/highload/baselines.py": "1b6addde247d1e3ff0e382e74cccd9ad28a9dc0acb3db596b51553ea29193b29",
+    "experiments/highload/environment.py": "c95f45667ece24191791f6120b4de2cc50ed5de24bfc7f2278a81c3075fa7cae",
+    "experiments/highload/geoi.py": "899e8963918b7c2eaab2649165c540975f0b1a9b5ea40c4b972a40ffdd84203a",
+    "experiments/highload/metrics.py": "a6678b59ff4ee03609cffc26eb0eaf378101f246f732c3ca11d2499fe8de4dc9",
+    "experiments/highload/policies.py": "ea4980514b0590d5151eec821d6275941158a234d6f1dfa38c6055d8ee2d8023",
+    "experiments/highload/preflight.py": "7f00b1a32563d596cc1dd8166daa509c21c970e6c0c8c810d6bc427c8011a6fa",
+    "experiments/highload/protocol.py": "b369aa89b6f419fa6d14ce97bb53aa1b1b137f665a2de987e708ad6ca4ae9fa0",
+    "experiments/highload/runner.py": "c77ffe3d8e87c7fdc4143ea7b74f3f4606b6fedba508edc894d8aa4555636728",
+    "experiments/highload/test_protocol.py": "6377ec162b665bc2db029c0ab834e67be0a01756978bf17705429a72fadd5c0d",
+    "experiments/lr_screen/__init__.py": "06df18419df06d84339b448ee7bceb85a1f5508722044674a6381bb3c5184a24",
+    "experiments/lr_screen/algorithms.py": "831ba75af83fbcba2b1b992f578fcc21aac6d4921577d9bdc305e9cba6d9f00e",
+    "experiments/lr_screen/mechanism.py": "2f709bc5255591b33b0cfa7883b6a6e36cd55c6f085ff8b61a5c040f1389b733",
+    "experiments/lr_screen/restricted_environment.py": "811b316fedae3c9d03e4b1d1532ffb612cdfb183201adcd7d0ee5431bc630054",
+    "experiments/lr_screen/runtime.py": "6533dfb298f4bdd96c8d97e70a816275e4b237fb66a6cf7be68f658c42379e1f",
+    "experiments/lr_screen/vendor/__init__.py": "7fe87133c824247ea61d2450f60db45e9c74ca5ab86d5e688aa6ed516e6ee9a9",
+    "experiments/lr_screen/vendor/accountant.py": "7ded418b0c8674eac9e0a6b39113d9666ccd8214c3022dceeb76b4fc17bb9551",
+    "experiments/lr_screen/vendor/location_methods.py": "201789cf655a52b96fccbe86c1161ec75c851bffa8b234c4281acd737af69897",
+    "model/config.json": "4a966725ec89eebbe57cfc4e6d6cc9387c15e75c4c31b9616fb6bba419a8fea9",
+    "model/cross_slot_environment.py": "24c4c6d5f46fa4c132913cc0404c195e6b13d7f7474c51106e3c879ea7fb666b",
+    "model/environment.py": "6de0ebbdbdc27b91ddbcee8329975cb855cca52c36a98aa4f22825eba7380cb1",
+    "model/learners.py": "498cbc2ee7d4ced21c5b2c953890bbf0ff11599e52ca7acacdab1d07799b1df1",
+    "model/new_method_environment.py": "87e2af3d48341988b3b36e5a5f1c31eef76c4a75b6cd0927d7ae775456dacc26",
+    "model/physics.py": "973be2c5441683fbfad9860207d70398eb71ed4db8436c53963116ec5597d1b1",
+    "model/population.py": "2780adf77018c793d10810a315cc93458f95aa463b7458dabe00f062b5929e73",
+    "model/privacy.py": "46590f533ebbeea6e5d778ee98ec8dd02dd526deb61539d82cb1f0db6ee11234",
+    "model/workload.py": "8a526b57949d380bc27352b68295cb3fa021f5783eb1dc00fcf85b04d2b293f4"
+  },
+  "plan_hash": "9370f3ddd63fc352e414db858ac6b57b877d2fff11d956bd080b798e64377c44",
+  "runtime": {
+    "torch": "2.5.1+cpu",
+    "numpy": "2.0.2",
+    "scipy": "1.13.1",
+    "device": "cpu",
+    "torch_threads": 1
+  },
+  "platform": "ubuntu-22.04 standard public CPU; no paid runner",
+  "authorization": "Human explicitly approved public pure code and encrypted simulation checkpoints/logs/results on this repository; no plaintext results/PDFs/keys/user files"
+}

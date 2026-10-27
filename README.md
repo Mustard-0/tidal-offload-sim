@@ -79,11 +79,17 @@ Finite limits:7days,96 cumulative segments/cell,3h training segment, no retries
 of unknown/numerical/code failures. A local owner holds one exclusive lock,
 checks RAM, never kills user processes and saves at update boundaries.
 
-Cloud ciphertext/result/checkpoint transfer is currently PENDING explicit human
-approval after an application safety-review rejection. No public workflow or
-encrypted-upload worker was written or started. Local owner has NO networking
-or credential access. Public pure-code permission is not treated as permission
-to upload private results. Do not work around that rejection.
+Human explicitly approved public pure code and encrypted simulation checkpoints,
+logs and results in an independent Release on Mustard-0/tidal-offload-sim.
+Only AES-GCM ciphertext and non-performance ownership receipts are published;
+no plaintext results, PDFs, user files or keys. The local saved197-update prefix
+is adopted only after both local processes exit and immutable hashes match.
+One lightweight cloud owner handles at most16 standard public CPU jobs, with
+96 cumulative segments per cell and the ORIGINAL seven-day start. No reruns of
+failed/unknown jobs. The local segment counts as segment1, not reset to zero.
+Use ops.test_cloud_contract before ops.deploy_cloud prepare/publish and the
+exclusive ops/launch_cloud.ps1. Publishing code is not proof of job execution;
+verify real workflow SHA/attempt and actual started receipts.
 
 ```powershell
 $env:PYTHONPATH='F:/stin_project/experiment_runtime/torch_cpu_2_5_1;F:/stin_project/tmapo_lr_speed_20261026/.runtime'
