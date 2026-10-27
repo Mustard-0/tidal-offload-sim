@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.runtime/
+runs/
+received/
+evidence/
+*.pt
+*.enc
+*.zip
+*.pdf
+*.csv
