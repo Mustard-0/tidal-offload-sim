@@ -57,7 +57,7 @@ def publish():
         if Path(name).suffix.lower() not in ('.py','.ps1','.md','.json','.yml',''):
             raise ValueError('Unexpected non-code file')
         data=(ROOT/name).read_bytes()
-        if re.search(rb'(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|-----BEGIN .*PRIVATE KEY)',data):
+        if re.search(rb'(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|(?m:^-----BEGIN [A-Z ]*PRIVATE KEY-----\r?$))',data):
             raise ValueError('Potential embedded credential')
     api=GitHub()
     repo=api.request('GET','/repos/'+REPOSITORY)
