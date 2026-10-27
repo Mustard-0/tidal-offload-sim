@@ -27,15 +27,15 @@ jobs:
         with:
           python-version: '3.9.25'
       - id: plan
-        run: python -m experiments.highload.cloud_worker --plan
+        run: python -m ops.cloud_pack --plan
   train:
     needs: plan
-    name: ${{ matrix.cell }}
+    name: ${{ matrix.job }}
     runs-on: ubuntu-22.04
     timeout-minutes: 330
     strategy:
       fail-fast: false
-      max-parallel: 16
+      max-parallel: 20
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -53,5 +53,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
-          HIGHLOAD_CELL: ${{ matrix.cell }}
-        run: python -m experiments.highload.cloud_worker --cell "$HIGHLOAD_CELL"
+          HIGHLOAD_JOB: ${{ matrix.job }}
+        run: python -m ops.cloud_pack --job "$HIGHLOAD_JOB"

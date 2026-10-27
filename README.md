@@ -101,3 +101,30 @@ $env:PYTHONPATH='F:/stin_project/experiment_runtime/torch_cpu_2_5_1;F:/stin_proj
 Plots must use cumulative environment steps/updates. Do NOT label3000 rollout
 updates as3000 drained episodes. Population-cycle boundaries must be disclosed;
 training-return movement across loads alone is not convergence evidence.
+
+## Execution-only acceleration revision
+
+The human subsequently requested maximum free-resource utilization. The frozen
+scientific plan/source/budgets above remain unchanged. An explicit execution
+override uses a conservative20 standard-job cap (the account API did not return
+a plan) and up to4 INDEPENDENT one-thread processes per four-vCPU Ubuntu runner.
+No GPU/larger/paid runner, extra configurations, seeds or interactions are added.
+All RNG, queues, models, CSVs and logs remain process-isolated per cell. Existing
+single-cell jobs retain their ORIGINAL public commit and keep running normally.
+New waves pin their own execution commit, not the old wave's commit.
+
+Activation requires an actual cloud component-only serial-vs-four-process probe:
+numeric training rows and COMPLETE learner/optimizer/replay state hashes must
+match, throughput must improve by at least15%, and summed peak RSS stays below
+12GiB. Only the small benchmark report is encrypted/uploaded; component models
+are not published or counted as formal results. See ops/benchmark_packed.py.
+The probe also privately records a CPU profile before single-process changes.
+
+The original lightweight owner exited on RemoteDisconnected during a GET jobs
+request. Audit evidence preserves the old state, all wave ownership, actual
+SHA/attempt/jobs, and absence of partial imports. ops/packed_owner.py adopts it
+only after verified owner exit and the matching actual cloud probe. Read-only
+network operations now retry; uncertain writes never blindly repeat. Exclusive
+lock and an execution_control.json action=quiesce support future safe handoff.
+The base plan's16 cap is historical; actual resource override and probe provenance
+are recorded separately in coordinator.json, not silently relabeled.

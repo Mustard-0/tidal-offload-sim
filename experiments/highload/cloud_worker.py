@@ -13,7 +13,7 @@ from ops.github_api import GitHub,REPOSITORY,download
 
 def request_from_tag():
     tag=os.environ['GITHUB_REF_NAME']
-    if not tag.startswith('highload-run-') or os.environ['GITHUB_RUN_ATTEMPT']!='1':
+    if not tag.startswith(('highload-run-','highload-probe-')) or os.environ['GITHUB_RUN_ATTEMPT']!='1':
         raise ValueError('Unknown trigger or prohibited rerun')
     req=json.loads(subprocess.check_output(['git','for-each-ref','refs/tags/'+tag,'--format=%(contents)'],text=True))
     if req['plan_hash']!=digest(plan()) or not 1<=len(req['entries'])<=16:
@@ -66,7 +66,8 @@ def run(entry,req):
         if entry['kind']=='train':
             prior_status=json.loads((out/'checkpoint_status.json').read_text())
             prior_csv=(out/'training.csv').read_bytes() if (out/'training.csv').exists() else None
-    if entry['segment']==1 or entry.get('local_handoff'):
+    shared_preflight=os.environ.get('HIGHLOAD_SHARED_PREFLIGHT_SHA')==os.environ['GITHUB_SHA']
+    if (entry['segment']==1 or entry.get('local_handoff')) and not shared_preflight:
         subprocess.run([sys.executable,'-m','unittest','experiments.highload.test_protocol','-v'],cwd=ROOT,check=True,timeout=600)
     receipt=dict(campaign=req['campaign'],cell=entry['cell'],kind=entry['kind'],method=entry['method'],
         lr=entry['lr'],seed=entry['seed'],segment=entry['segment'],run_id=os.environ['GITHUB_RUN_ID'],
@@ -77,7 +78,8 @@ def run(entry,req):
     if entry['kind']=='train':
         command+=['--max-seconds','10800']
         if parent:command.append('--resume')
-    started=time.monotonic();log=ROOT/'worker.log'
+    started=time.monotonic();log=ROOT/'runs/worker_logs'/(entry['cell']+f".segment{entry['segment']:03d}.log")
+    log.parent.mkdir(parents=True,exist_ok=True)
     with log.open('w',encoding='utf-8') as f:
         child=subprocess.Popen(command,cwd=ROOT,stdout=f,stderr=subprocess.STDOUT)
         deadline=time.monotonic()+900

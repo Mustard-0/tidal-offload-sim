@@ -117,16 +117,17 @@ def collect(api,state,root,key):
                 continue
             w['run_id']=str(found[0]['id'])
         run=api.request('GET',BASE+'/actions/runs/'+w['run_id'])
-        if run['head_sha']!=state['public_commit'] or run['run_attempt']!=1:raise ValueError('Wrong public code/attempt')
+        wave_commit=w.get('public_commit',state['public_commit'])
+        if run['head_sha']!=wave_commit or run['run_attempt']!=1:raise ValueError('Wrong public code/attempt')
         jobs=api.request('GET',BASE+'/actions/runs/'+w['run_id']+'/jobs?per_page=100')['jobs']
         w['status']=run['status'];w['conclusion']=run['conclusion']
         save(root/'github'/f"run{w['run_id']}.json",dict(run=run,jobs=jobs))
         for e in w['entries']:
             ident=e['cell']
             if ident in w['received']:continue
-            job=next((j for j in jobs if j['name']==ident),None)
+            job=next((j for j in jobs if j['name']==e.get('job_name',ident)),None)
             expected=dict(campaign=state['campaign'],cell=ident,kind=e['kind'],method=e['method'],lr=e['lr'],seed=e['seed'],
-                segment=e['segment'],run_id=w['run_id'],attempt='1',source_commit=state['public_commit'],plan_hash=state['plan_hash'],preflight_passed=True)
+                segment=e['segment'],run_id=w['run_id'],attempt='1',source_commit=wave_commit,plan_hash=state['plan_hash'],preflight_passed=True)
             stem=ident+f".segment{e['segment']:03d}"
             started_name=stem+'.started.json'
             if started_name in listing and not state['cells'][ident].get('started_receipt')==started_name:
@@ -137,10 +138,11 @@ def collect(api,state,root,key):
                     raise ValueError('Local continuation not proven')
                 save(root/'receipts'/started_name,start)
                 state['cells'][ident]['started_receipt']=started_name
-            if job is None or job['status']!='completed':
+            receipt_name=stem+'.enc.outcome.json'
+            packed_done=bool(e.get('job_name') and receipt_name in listing and job and job['status'] in ('in_progress','completed'))
+            if (job is None or job['status']!='completed') and not packed_done:
                 if run['status']=='completed':raise ValueError('Workflow ended without expected training job')
                 continue
-            receipt_name=stem+'.enc.outcome.json'
             if receipt_name not in listing:
                 w.setdefault('missing_since',{}).setdefault(ident,time.time())
                 if time.time()-w['missing_since'][ident]>180:raise ValueError('Completed job has no published outcome: '+ident)
@@ -165,7 +167,8 @@ def collect(api,state,root,key):
             folder=root/'received'/ident/f"segment{e['segment']:03d}"
             unpack(raw,folder)
             c=state['cells'][ident];c.update(local_prefix=str(folder),local_handoff=False)
-            if receipt['state'] in ('failed','unknown') or receipt['exit_code'] or job['conclusion']!='success':
+            job_failed=job['conclusion'] not in (None,'success') and not e.get('job_name')
+            if receipt['state'] in ('failed','unknown') or receipt['exit_code'] or job_failed:
                 c['state']='failed';state.update(stop_expansion=True,error='Cloud failure evidence retained: '+ident)
             elif e['kind']=='train':
                 prefix_audit(folder,state['specs'][ident])
