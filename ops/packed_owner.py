@@ -5,6 +5,7 @@ import http.client
 import json
 import math
 import os
+import subprocess
 from pathlib import Path
 import sys
 import time
@@ -57,6 +58,19 @@ def build_request(state,ids):
         packing=4,selected_TMAPO_lr=state.get('selection',{}).get('selected',{}).get('TMAPO'))
 
 
+def memory_safe_prefix(state,ids,free_jobs):
+    # Full SAC replay and its temporary checkpoint-load copy dominate memory.
+    # A component's early peak alone cannot establish long-run safety.
+    selected=[];used=0.
+    for ident in ids[:min(16,free_jobs*4)]:
+        if len(selected)%4==0:used=0.
+        spec=state['specs'][ident]
+        weight=(10. if spec['kind']=='evaluation' else 6.) if spec['method']=='SD-SAC-Adapted' else 2.5 if spec['method']=='MARATD3-Adapted' else 1.5
+        if used+weight>12.:break
+        selected.append(ident);used+=weight
+    return selected
+
+
 def dispatch(api,state,root,key,ids):
     req=build_request(state,ids)
     for e in req['entries']:
@@ -92,6 +106,7 @@ def adoption(root,export,gate):
     s=copy.deepcopy(s)
     s.setdefault('owner_history',[]).append(dict(pid=s['pid'],status=s['status'],error=s['error'],handoff='audited read-only network disconnect; all existing cloud jobs adopted without rerun'))
     s.update(pid=os.getpid(),status='running',stop_expansion=False,execution_commit=export['commit'],
+        scheduler_commit=subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),
         maximum_parallel_jobs=20,maximum_processes_per_runner=4,
         execution_override=dict(reason='Human explicitly requested all free resource acceleration',base_plan_parallel=16,
             actual_job_cap=20,processes_per_standard_four_vCPU_runner=4,
@@ -133,7 +148,7 @@ def run(root):
                     if ready and live_jobs<20:
                         # No extra cells: only the already-declared ready queue is packed.
                         while ready and live_jobs<20:
-                            take=ready[:min(16,(20-live_jobs)*4)]
+                            take=memory_safe_prefix(state,ready,20-live_jobs)
                             dispatch(api,state,root,key,take);live_jobs+=math.ceil(len(take)/4);ready=ready[len(take):]
                     elif not ready and not active:
                         if state['phase']=='screen':activate_ablations(state)

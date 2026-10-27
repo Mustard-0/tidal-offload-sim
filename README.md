@@ -112,6 +112,11 @@ No GPU/larger/paid runner, extra configurations, seeds or interactions are added
 All RNG, queues, models, CSVs and logs remain process-isolated per cell. Existing
 single-cell jobs retain their ORIGINAL public commit and keep running normally.
 New waves pin their own execution commit, not the old wave's commit.
+The local dispatch planner also applies a12GiB conservative per-runner estimate:
+SAC training6GiB / final-test checkpoint loading10GiB, recurrent TD3 2.5GiB,
+other processes1.5GiB. Heavy replay models are NOT blindly packed fourfold.
+The worker commit that passed the cloud probe is pinned independently of the
+local scheduler commit; memory grouping only reduces that tested process count.
 
 Activation requires an actual cloud component-only serial-vs-four-process probe:
 numeric training rows and COMPLETE learner/optimizer/replay state hashes must

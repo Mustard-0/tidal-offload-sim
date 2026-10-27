@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 from ops.cloud_owner import ROOT,collect
 from ops.cloud_pack import groups
-from ops.packed_owner import ReadRetryGitHub,build_request,worker_groups,adoption
+from ops.packed_owner import ReadRetryGitHub,build_request,worker_groups,adoption,memory_safe_prefix
 from experiments.highload.protocol import source_hashes,digest,plan
 
 
@@ -26,19 +26,27 @@ class PackingContracts(unittest.TestCase):
             self.assertEqual(f.call_count,1)
 
     def test_pack_only_ready_distinct_cells(self):
-        s=copy.deepcopy(json.loads((ROOT/'runs/highload_cloud_01/coordinator.json').read_text()))
-        ready=[k for k,c in s['cells'].items() if c['state']=='ready']
+        specs={c['id']:dict(kind='train',method=c['algorithm'],lr=c['lr_index'],seed=c['seed']) for c in plan()['cells']}
+        s=dict(campaign='unit',release_id=1,plan_hash=digest(plan()),specs=specs,
+            cells={k:dict(state='ready',segments=0) for k in specs})
+        ready=list(specs)
         req=build_request(s,ready[:11])
         self.assertTrue(all(len(g)<=4 for g in groups(req['entries'])))
         self.assertEqual(len(groups(req['entries'])),3)
         self.assertEqual(len(req['entries']),11)
         with self.assertRaises(ValueError):build_request(s,[ready[0],ready[0]])
-        old=next(k for k,c in s['cells'].items() if c['state']=='active')
+        old=ready[-1];s['cells'][old]['state']='active'
         with self.assertRaises(ValueError):build_request(s,[old])
 
     def test_concurrent_groups_not_cells(self):
         s=dict(waves=[dict(finalized=False,run_id=None,received=[],entries=[dict(cell=str(i),job_name='pack-00') for i in range(4)])])
         with tempfile.TemporaryDirectory(dir=ROOT/'evidence') as d:self.assertEqual(worker_groups(s,Path(d)),1)
+
+    def test_heavy_replay_not_packed_fourfold(self):
+        s=dict(specs={str(i):dict(method='SD-SAC-Adapted',kind='train') for i in range(4)})
+        self.assertEqual(memory_safe_prefix(s,list(s['specs']),20),['0','1'])
+        for spec in s['specs'].values():spec['kind']='evaluation'
+        self.assertEqual(memory_safe_prefix(s,list(s['specs']),20),['0'])
 
     def test_mixed_commit_collect_preserves_old_ownership(self):
         entries=lambda name,job=None:[dict(cell=name,kind='train',method='TMAPO',lr=1,seed=87021,segment=1,**(dict(job_name=job) if job else {}))]
