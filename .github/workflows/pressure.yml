@@ -1,0 +1,62 @@
+name: Finite shared long-scene Greedy pressure probe - no training
+on:
+  push:
+    tags: ['greedy-pressure-*']
+permissions:
+  contents: write
+concurrency:
+  group: greedy-pressure-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CUDA_VISIBLE_DEVICES: '-1'
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  PRESSURE_CAMPAIGN: ${{ github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+  LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+jobs:
+  gate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: python -m pip install -r pressure/requirements.txt
+      - name: Source, streaming and finite rule contracts
+        run: python -m pressure.cloud gate
+  evaluate:
+    needs: gate
+    name: ${{ matrix.cell }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        cell: [Greedy_N100_q3, Greedy_N100_q6, Greedy_N100_q9, Greedy_N150_q3, Greedy_N150_q6, Greedy_N150_q9, GeoI-Greedy_N100_q3, GeoI-Greedy_N100_q6, GeoI-Greedy_N100_q9, GeoI-Greedy_N150_q3, GeoI-Greedy_N150_q6, GeoI-Greedy_N150_q9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: python -m pip install -r pressure/requirements.txt
+      - name: Fixed rule-only scenarios, raw CSV and encrypted output
+        env:
+          PRESSURE_CELL: ${{ matrix.cell }}
+        run: python -m pressure.cloud worker --cell "$PRESSURE_CELL"
+  collect:
+    needs: [gate, evaluate]
+    if: ${{ always() && needs.gate.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: python -m pip install -r pressure/requirements.txt
+      - name: Verify full paired grid and encrypt actual plots
+        run: python -m pressure.cloud collect
