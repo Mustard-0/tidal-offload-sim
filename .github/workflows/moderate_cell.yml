@@ -1,0 +1,59 @@
+name: One finite moderate-load cell
+on:
+  workflow_call:
+    inputs:
+      cell:
+        required: true
+        type: string
+    secrets:
+      LR_SCREEN_TRANSPORT_KEY:
+        required: true
+permissions:
+  contents: write
+env:
+  CUDA_VISIBLE_DEVICES: '-1'
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  MODERATE_CAMPAIGN: ${{ github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+  LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+jobs:
+  train:
+    name: ${{ inputs.cell }} train
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - name: Install pinned free CPU runtime
+        run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 matplotlib==3.9.4 cryptography==44.0.3
+      - name: First bounded training segment
+        env:
+          MODERATE_CELL: ${{ inputs.cell }}
+        run: python -m moderate.cloud train --cell "$MODERATE_CELL" --segment 1
+      - name: Resume only a verified normal pause, otherwise reference completion
+        env:
+          MODERATE_CELL: ${{ inputs.cell }}
+        run: python -m moderate.cloud train --cell "$MODERATE_CELL" --segment 2
+  evaluate:
+    name: ${{ inputs.cell }} test
+    needs: train
+    runs-on: ubuntu-22.04
+    timeout-minutes: 210
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 matplotlib==3.9.4 cryptography==44.0.3
+      - name: New held-out full-cycle20-150 inference from terminal weights only
+        env:
+          MODERATE_CELL: ${{ inputs.cell }}
+        run: python -m moderate.cloud evaluate --cell "$MODERATE_CELL"

@@ -1,0 +1,80 @@
+name: Moderate common load - five learning methods, two seeds, finite free CPU
+on:
+  push:
+    tags: ['moderate-six-*']
+permissions:
+  contents: write
+concurrency:
+  group: moderate-six-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CUDA_VISIBLE_DEVICES: '-1'
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  MODERATE_CAMPAIGN: ${{ github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+  LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+jobs:
+  gate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 matplotlib==3.9.4 cryptography==44.0.3
+      - name: Five real learner updates, full mid-cycle resume, no-leakage and speed gate
+        run: python -m moderate.cloud gate
+  cells:
+    needs: gate
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        cell: [TMAPO_seed87021, TMAPO_seed87022, IPPO_seed87021, IPPO_seed87022, PPO_seed87021, PPO_seed87022, SD-SAC-Adapted_seed87021, SD-SAC-Adapted_seed87022, MARATD3-Adapted_seed87021, MARATD3-Adapted_seed87022]
+    uses: ./.github/workflows/moderate_cell.yml
+    with:
+      cell: ${{ matrix.cell }}
+    secrets:
+      LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+  rules:
+    name: ${{ matrix.cell }} test
+    needs: gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        cell: [Greedy, GeoI-Greedy]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 matplotlib==3.9.4 cryptography==44.0.3
+      - name: Strong original rules on the SAME fresh final inputs
+        env:
+          MODERATE_CELL: ${{ matrix.cell }}
+        run: python -m moderate.cloud evaluate --cell "$MODERATE_CELL"
+  collect:
+    needs: [gate,cells,rules]
+    if: ${{ always() && needs.gate.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 matplotlib==3.9.4 cryptography==44.0.3
+      - name: Verify budgets and paired raw input prefixes, encrypt actual figures
+        run: python -m moderate.cloud collect
