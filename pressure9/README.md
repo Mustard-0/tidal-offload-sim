@@ -17,8 +17,8 @@ Primary deployment PREDECLARED argmax for all categorical learners; native
 deterministic MAR. Different from parent's sampled test, so no mixing old scores
 or claiming only the load changed across versions. Fresh validation8499101/8499109,
 terminal test9599101/9599109. N20/40/60/80/100/125/150;5s warmup+300s+drain.
-Both rules use identical new inputs; prior98.69ms/13.33% are development results,
-not promised scores on new traces. Preserve every fixed seed/unfavorable result.
+Both rules use identical new inputs; prior development observations are not
+promised scores on new traces. Preserve every fixed seed/unfavorable result.
 
 ## TMAPO-only modules and waiting
 
