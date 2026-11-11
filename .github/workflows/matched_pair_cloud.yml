@@ -1,0 +1,55 @@
+name: Matched Greedy baseline evaluation only
+on:
+  push:
+    branches: ['experiment/greedy-paired-overlay-20261112']
+permissions:
+  contents: write
+env:
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  CUDA_VISIBLE_DEVICES: '-1'
+jobs:
+  input-gate:
+    if: github.repository == 'Mustard-0/tidal-offload-sim' && github.run_attempt == '1'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+        run: python matched_pair_cloud.py --users 20 --trace 9792101
+  paired-evaluation:
+    needs: input-gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        users: [20, 40, 60, 80, 100, 125]
+        trace: [9792101, 9792109]
+        exclude:
+          - users: 20
+            trace: 9792101
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+          USERS: ${{ matrix.users }}
+          TRACE: ${{ matrix.trace }}
+        run: python matched_pair_cloud.py --users "$USERS" --trace "$TRACE"
