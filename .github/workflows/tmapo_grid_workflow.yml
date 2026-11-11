@@ -1,0 +1,55 @@
+name: TMAPO nominal replay then bounded privacy interaction
+on:
+  push:
+    branches: ['experiment/tmapo-privacy-grid-20261112']
+permissions:
+  contents: write
+env:
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  CUDA_VISIBLE_DEVICES: '-1'
+jobs:
+  nominal-replay:
+    if: github.repository == 'Mustard-0/tidal-offload-sim' && github.run_attempt == '1'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ["nominal_seed87021","nominal_seed87022"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+          CELL: ${{ matrix.cell }}
+        run: python tmapo_grid_worker.py "$CELL"
+  interaction:
+    needs: nominal-replay
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    strategy:
+      max-parallel: 12
+      fail-fast: false
+      matrix:
+        cell: ["e0_s0_seed87021","e0_s0_seed87022","e0_s2_seed87021","e0_s2_seed87022","e1_s0_seed87021","e1_s0_seed87022","e1_s2_seed87021","e1_s2_seed87022","e2_s0_seed87021","e2_s0_seed87022","e2_s2_seed87021","e2_s2_seed87022"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+          CELL: ${{ matrix.cell }}
+        run: python tmapo_grid_worker.py "$CELL"
