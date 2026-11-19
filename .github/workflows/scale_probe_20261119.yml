@@ -1,0 +1,34 @@
+name: Eight-controller development pressure probe
+on:
+  push:
+    branches: ['experiment/eight-controller-pressure-probe-20261119']
+permissions:
+  contents: write
+env:
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  CUDA_VISIBLE_DEVICES: '-1'
+jobs:
+  probe:
+    if: github.repository == 'Mustard-0/tidal-offload-sim' && github.run_attempt == '1'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      max-parallel: 4
+      fail-fast: false
+      matrix:
+        cell: ['TMAPO_seed871901','TMAPO_seed871909','IPPO_seed871901','IPPO_seed871909','PPO_seed871901','PPO_seed871909','SD-SAC-Adapted_seed871901','SD-SAC-Adapted_seed871909','MARATD3-Adapted_seed871901','MARATD3-Adapted_seed871909','Greedy-NoPrivacy','Greedy-GeoI','Local-Only']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+          CELL: ${{ matrix.cell }}
+        run: python scale_probe_worker.py "$CELL"
