@@ -1,0 +1,106 @@
+name: Full tide TMAPO validation development gate fix
+on:
+  push:
+    branches: ['experiment/tmapo-full-tide-development-20261119-gatefix']
+permissions:
+  contents: write
+env:
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  CUDA_VISIBLE_DEVICES: '-1'
+jobs:
+  gate:
+    if: github.repository == 'Mustard-0/tidal-offload-sim' && github.run_attempt == '1'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+        run: python optimization2_worker.py gate
+  train1:
+    needs: gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 155
+    strategy:
+      max-parallel: 8
+      fail-fast: false
+      matrix:
+        cell: ['full70_seed871901','full70_seed871909','nopred70_seed871901','nopred70_seed871909','full35_seed871901','full35_seed871909','nopred35_seed871901','nopred35_seed871909']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+          CELL: ${{ matrix.cell }}
+        run: python optimization2_worker.py train --cell "$CELL" --part 1
+  continuation:
+    needs: train1
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      has_paused: ${{ steps.plan.outputs.has_paused }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: python -m pip install cryptography==44.0.3
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+        run: python optimization2_worker.py prepare
+  train2:
+    needs: continuation
+    if: needs.continuation.outputs.has_paused == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 155
+    strategy:
+      max-parallel: 8
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.continuation.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+          CELL: ${{ matrix.cell }}
+        run: python optimization2_worker.py train --cell "$CELL" --part 2
+  selection:
+    needs: [train1, continuation, train2]
+    if: always() && needs.train1.result == 'success' && needs.continuation.result == 'success' && (needs.train2.result == 'success' || needs.train2.result == 'skipped')
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: python -m pip install cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+        run: python optimization2_selection.py
+
