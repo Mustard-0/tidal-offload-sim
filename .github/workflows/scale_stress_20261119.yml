@@ -1,0 +1,55 @@
+name: Eight-method full-tide scalability pressure arms
+on:
+  push:
+    branches: ['experiment/eight-method-full-tide-pressure-20261119']
+permissions:
+  actions: read
+  contents: write
+env:
+  OMP_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  CUDA_VISIBLE_DEVICES: '-1'
+jobs:
+  gate:
+    if: github.repository == 'Mustard-0/tidal-offload-sim' && github.run_attempt == '1'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 132
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+        run: python scale_stress_worker.py gate
+  evaluate:
+    needs: gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      max-parallel: 6
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.gate.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9.25'
+      - run: |
+          python -m pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy==2.0.2 scipy==1.13.1 cryptography==44.0.3
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LR_SCREEN_TRANSPORT_KEY: ${{ secrets.LR_SCREEN_TRANSPORT_KEY }}
+          SCENARIO: ${{ matrix.scenario }}
+          CELL: ${{ matrix.cell }}
+          TRACE: ${{ matrix.trace }}
+        run: python scale_stress_worker.py evaluate --scenario "$SCENARIO" --cell "$CELL" --trace "$TRACE"
