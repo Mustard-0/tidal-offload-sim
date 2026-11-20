@@ -5,6 +5,7 @@ from copy import copy
 import json
 import math
 import os
+from pathlib import Path
 import time
 
 from evaluation_adapters import evaluation_environment_types
@@ -15,9 +16,33 @@ from review_checks import bootstrap, check_metrics
 from scalability_protocol import PRIOR, TOTAL_STEPS, settings, split_cell
 
 
+class AuditTransport(store.Transport):
+    def __init__(self):
+        assert os.environ['GITHUB_REPOSITORY'] == store.REPOSITORY
+        assert os.environ['GITHUB_REF'] == 'refs/heads/'+spec.BRANCH
+        assert os.environ['GITHUB_RUN_ATTEMPT'] == '1'
+        self.api = store.GitHub(os.environ['GH_TOKEN'])
+        self.key = bytes.fromhex(os.environ['LR_SCREEN_TRANSPORT_KEY'])
+        self.commit, self.run_id = os.environ['GITHUB_SHA'], os.environ['GITHUB_RUN_ID']
+        self.release = self.api.request('GET', store.BASE+'/releases/tags/'+spec.CAMPAIGN)
+        packet = spec.manifest_packet(self.release, self.commit)
+        self.inputs_sha256 = store.sha(packet)
+        raw, _ = store.unseal(packet, self.key,
+            dict(campaign=spec.CAMPAIGN, source_commit=self.commit, purpose='review-inputs'))
+        self.inputs = json.loads(raw)
+        assert self.inputs['source_base'] == spec.BASE_COMMIT
+        assert self.inputs['plan'] == json.loads(json.dumps(spec.plan()))
+        for p, h in {**self.inputs['inherited_sha256'], **self.inputs['plan']['inherited_review_hashes'],
+                     **self.inputs['new_sha256']}.items():
+            assert store.sha(Path(p).read_bytes().replace(b'\r\n', b'\n')) == h, p
+        self.plan_hash = spec.digest(self.inputs['plan'])
+        self.assets = {a['name']: a for a in self.api.request('GET',
+            store.BASE+f"/releases/{self.release['id']}/assets?per_page=100")}
+
+
 def open_transport():
-    store.BRANCH, store.CAMPAIGN, store.plan = spec.BRANCH, spec.CAMPAIGN, spec.plan
-    return store.Transport()
+    store.CAMPAIGN = spec.CAMPAIGN
+    return AuditTransport()
 
 
 def parent_store(t):

@@ -1,6 +1,8 @@
 """Frozen, finite development screen and targeted accounting replay."""
 
+from base64 import b64decode, b64encode
 import hashlib
+import json
 from pathlib import Path
 from statistics import mean
 
@@ -12,6 +14,9 @@ CAMPAIGN = 'energy-qos-greedy-audit-20261121'
 BRANCH = 'experiment/' + CAMPAIGN
 WORKFLOW = '.github/workflows/energy_qos_greedy_20261121.yml'
 BASE_COMMIT = 'd7491d5be11d7737c4a4320bae51877189b7b36c'
+PREPARED_RELEASE = 452913522
+PREPARED_TARGET = 'bfe42bd28924902d92d8d40b1c43a059a6e0f163'
+MANIFEST_MARKER = 'STIN authenticated encrypted manifest: '
 PARENT_RUN = 44530737458
 PARENT_CAMPAIGN = 'tt-mappo-matched-scale-up-20261119-gatefix'
 PARENT_RELEASE = 451362024
@@ -35,6 +40,24 @@ INHERITED = ('review_environment.py', 'review_checks.py', 'review_protocol.py', 
 WARMUP, DEV_MEASURE, REPLAY_MEASURE = 5., 12., 300.
 DEV_WALL, REPLAY_WALL, JOBS = 3500, 5700, 2 + len(DEV_CELLS) + len(REPLAY_SHARDS)
 SCENES = len(DEV_CELLS) * len(DEV_KEYS) + len(REPLAY_SHARDS) * len(REPLAY_POP)
+
+
+def release_body(description, commit, packet):
+    info = dict(commit=commit, digest=hashlib.sha256(packet).hexdigest(),
+                ciphertext=b64encode(packet).decode('ascii'))
+    return description + '\n\n' + MANIFEST_MARKER + json.dumps(info, separators=(',', ':'))
+
+
+def manifest_packet(release, commit):
+    assert release['id'] == PREPARED_RELEASE and release['tag_name'] == CAMPAIGN
+    assert release['target_commitish'] == PREPARED_TARGET
+    assert len(release['body']) < 32768
+    line, = [s[len(MANIFEST_MARKER):] for s in release['body'].splitlines() if s.startswith(MANIFEST_MARKER)]
+    info = json.loads(line)
+    packet = b64decode(info['ciphertext'], validate=True)
+    assert 0 < len(packet) < 16384
+    assert info['commit'] == commit and info['digest'] == hashlib.sha256(packet).hexdigest()
+    return packet
 
 
 def plan(root=None):
